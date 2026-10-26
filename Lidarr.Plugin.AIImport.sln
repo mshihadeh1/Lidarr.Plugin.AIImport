@@ -1,10 +1,18 @@
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lidarr.Plugin.AIImport", "src/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.csproj", "{1C0C5729-B047-4CB4-8335-3A330C68A331}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lidarr.Plugin.AIImport", "src\Lidarr.Plugin.AIImport\Lidarr.Plugin.AIImport.csproj", "{1C0C5729-B047-4CB4-8335-3A330C68A331}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lidarr.Plugin.AIImport.Tests", "tests/Lidarr.Plugin.AIImport.Tests/Lidarr.Plugin.AIImport.Tests.csproj", "{E5789EA1-447F-45E0-AF65-C3029B6E71D4}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lidarr.Plugin.AIImport.Tests", "tests\Lidarr.Plugin.AIImport.Tests\Lidarr.Plugin.AIImport.Tests.csproj", "{E5789EA1-447F-45E0-AF65-C3029B6E71D4}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "companion", "companion", "{65FB7299-DEE8-478F-BC9E-A86D814F924F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lidarr.AIImport.Companion", "companion\Lidarr.AIImport.Companion\Lidarr.AIImport.Companion.csproj", "{40201755-775E-43A3-8791-01667C8F96A6}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{3F5F2A28-31FF-4765-80ED-2DF029783036}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lidarr.AIImport.Companion.Tests", "tests\Lidarr.AIImport.Companion.Tests\Lidarr.AIImport.Companion.Tests.csproj", "{EA16E029-F35E-4582-A44B-3D8F641077F6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -20,5 +28,17 @@ Global
 		{E5789EA1-447F-45E0-AF65-C3029B6E71D4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E5789EA1-447F-45E0-AF65-C3029B6E71D4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E5789EA1-447F-45E0-AF65-C3029B6E71D4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{40201755-775E-43A3-8791-01667C8F96A6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{40201755-775E-43A3-8791-01667C8F96A6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{40201755-775E-43A3-8791-01667C8F96A6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{40201755-775E-43A3-8791-01667C8F96A6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EA16E029-F35E-4582-A44B-3D8F641077F6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EA16E029-F35E-4582-A44B-3D8F641077F6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EA16E029-F35E-4582-A44B-3D8F641077F6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EA16E029-F35E-4582-A44B-3D8F641077F6}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{40201755-775E-43A3-8791-01667C8F96A6} = {65FB7299-DEE8-478F-BC9E-A86D814F924F}
+		{EA16E029-F35E-4582-A44B-3D8F641077F6} = {3F5F2A28-31FF-4765-80ED-2DF029783036}
 	EndGlobalSection
 EndGlobal

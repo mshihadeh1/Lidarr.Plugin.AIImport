@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Lidarr.AIImport.Companion</AssemblyName>
+    <RootNamespace>Lidarr.AIImport.Companion</RootNamespace>
+    <Version Condition="'$(Version)' == ''">0.2.0</Version>
+  </PropertyGroup>
+</Project>

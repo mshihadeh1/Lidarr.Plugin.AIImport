@@ -1,0 +1,189 @@
+using System.Security.Cryptography;
+using System.Text.Json;
+using Lidarr.AIImport.Companion.Lidarr;
+using Lidarr.AIImport.Companion.Matching;
+using Lidarr.AIImport.Companion.Models;
+
+namespace Lidarr.AIImport.Companion.Discovery;
+
+public interface IFailedImportDiscoveryService
+{
+    Task<IReadOnlyList<AnalysisResult>> DiscoverAsync(CancellationToken cancellationToken);
+}
+
+public sealed class FailedImportDiscoveryService : IFailedImportDiscoveryService
+{
+    public const string CompatibleLidarrVersion = "3.1.2.4913";
+    private static readonly HashSet<string> FailedImportStates =
+        new(new[] { "importBlocked", "importFailed" }, StringComparer.OrdinalIgnoreCase);
+
+    private readonly ILidarrClient _lidarrClient;
+    private readonly DeterministicMatcher _matcher;
+
+    public FailedImportDiscoveryService(ILidarrClient lidarrClient, DeterministicMatcher matcher)
+    {
+        _lidarrClient = lidarrClient;
+        _matcher = matcher;
+    }
+
+    public async Task<IReadOnlyList<AnalysisResult>> DiscoverAsync(CancellationToken cancellationToken)
+    {
+        var status = await _lidarrClient.GetSystemStatusAsync(cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(status.Version, CompatibleLidarrVersion, StringComparison.Ordinal) ||
+            !string.Equals(status.PackageVersion, CompatibleLidarrVersion, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Lidarr {CompatibleLidarrVersion} is required; connected version is {status.Version} (package {status.PackageVersion}).");
+        }
+
+        var queue = await _lidarrClient.GetQueueAsync(cancellationToken).ConfigureAwait(false);
+        var failed = queue
+            .Where(x => x.TrackedDownloadState is not null && FailedImportStates.Contains(x.TrackedDownloadState))
+            .GroupBy(x => x.DownloadId, StringComparer.Ordinal)
+            .Select(x => x.OrderBy(item => item.Id).First())
+            .OrderBy(x => x.Id)
+            .ThenBy(x => x.DownloadId, StringComparer.Ordinal)
+            .ToArray();
+
+        var results = new List<AnalysisResult>(failed.Length);
+        foreach (var item in failed)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            results.Add(await AnalyzeAsync(item, cancellationToken).ConfigureAwait(false));
+        }
+        return results;
+    }
+
+    private async Task<AnalysisResult> AnalyzeAsync(QueueCandidate item, CancellationToken cancellationToken)
+    {
+        var files = await _lidarrClient.GetManualImportsAsync(item.DownloadId, null, cancellationToken).ConfigureAwait(false);
+        var albumIds = files.Select(x => x.AlbumId)
+            .Append(item.AlbumId)
+            .Where(x => x.HasValue && x.Value > 0)
+            .Select(x => x!.Value)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToArray();
+
+        var candidates = new List<ReleaseCandidate>();
+        foreach (var albumId in albumIds)
+        {
+            candidates.AddRange(await _lidarrClient.GetReleaseCandidatesAsync(albumId, cancellationToken).ConfigureAwait(false));
+        }
+        var verifiedCandidates = candidates
+            .GroupBy(x => x.Id)
+            .Select(x => x.First())
+            .OrderBy(x => x.Id)
+            .ToArray();
+
+        var deterministic = _matcher.Match(files, verifiedCandidates);
+        var proposal = ToProposal(deterministic, verifiedCandidates);
+        try
+        {
+            proposal = StrictProposalValidator.Validate(proposal, files, verifiedCandidates);
+        }
+        catch (ProposalValidationException exception)
+        {
+            proposal = new MatchProposal(
+                1,
+                ProposalStatus.ManualReview,
+                null,
+                null,
+                null,
+                0m,
+                $"Deterministic proposal failed strict validation: {exception.Message}",
+                Array.Empty<TrackProposal>());
+        }
+        return new AnalysisResult(
+            AnalysisId(item.DownloadId, files, verifiedCandidates),
+            item.DownloadId,
+            item.Title,
+            proposal,
+            files,
+            verifiedCandidates,
+            UsedLlm: false,
+            DateTimeOffset.UtcNow);
+    }
+
+    private static MatchProposal ToProposal(
+        DeterministicResult result,
+        IReadOnlyList<ReleaseCandidate> candidates)
+    {
+        if (result.Status == DeterministicStatus.Proposed && result.ReleaseId.HasValue)
+        {
+            var release = candidates.Single(x => x.Id == result.ReleaseId.Value);
+            if (release.ArtistId.HasValue)
+            {
+                return new MatchProposal(
+                    1,
+                    ProposalStatus.Proposed,
+                    release.ArtistId,
+                    release.AlbumId,
+                    release.Id,
+                    result.Confidence,
+                    result.Explanation,
+                    result.Tracks);
+            }
+        }
+
+        return new MatchProposal(
+            1,
+            ProposalStatus.ManualReview,
+            null,
+            null,
+            null,
+            result.Confidence,
+            result.Explanation,
+            Array.Empty<TrackProposal>());
+    }
+
+    private static string AnalysisId(
+        string downloadId,
+        IReadOnlyList<SourceFileCandidate> files,
+        IReadOnlyList<ReleaseCandidate> candidates)
+    {
+        var snapshot = new
+        {
+            Version = 1,
+            DownloadId = downloadId,
+            Files = files.OrderBy(x => x.Id, StringComparer.Ordinal).Select(x => new
+            {
+                x.Id,
+                x.Artist,
+                x.Album,
+                x.Title,
+                x.DiscNumber,
+                TrackNumbers = x.TrackNumbers.OrderBy(number => number).ToArray(),
+                x.DurationMs,
+                x.TrackMusicBrainzId,
+                Rejections = x.Rejections.OrderBy(reason => reason, StringComparer.Ordinal).ToArray(),
+                x.ArtistId,
+                x.AlbumId
+            }).ToArray(),
+            Candidates = candidates.OrderBy(x => x.Id).Select(x => new
+            {
+                x.AlbumId,
+                x.Id,
+                x.Artist,
+                x.Title,
+                x.ForeignReleaseId,
+                x.AlbumTitle,
+                x.Disambiguation,
+                x.ArtistId,
+                Tracks = x.Tracks.OrderBy(track => track.Id).Select(track => new
+                {
+                    track.Id,
+                    track.Title,
+                    track.DiscNumber,
+                    track.TrackNumber,
+                    track.DurationMs,
+                    track.ForeignTrackId,
+                    track.ForeignRecordingId,
+                    track.HasFile
+                }).ToArray()
+            }).ToArray()
+        };
+        var hash = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(snapshot));
+        return Convert.ToHexString(hash).ToLowerInvariant()[..24];
+    }
+}

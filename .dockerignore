@@ -1,0 +1,12 @@
+.git
+.github
+artifacts
+docs
+examples
+schema
+scripts
+src
+tests
+vendor
+**/bin
+**/obj
