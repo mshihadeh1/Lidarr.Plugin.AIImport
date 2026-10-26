@@ -1,0 +1,117 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 8.0.427
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            NuGet.config
+
+      - name: Derive and validate package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Tag must be strict SemVer prefixed with v" >&2
+              exit 2
+            fi
+            version="${GITHUB_REF_NAME#v}"
+            assembly_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.0"
+          else
+            version="0.1.0-ci.${GITHUB_RUN_NUMBER}"
+            assembly_version="0.1.0.0"
+          fi
+          echo "PLUGIN_VERSION=$version" >> "$GITHUB_ENV"
+          echo "PLUGIN_ASSEMBLY_VERSION=$assembly_version" >> "$GITHUB_ENV"
+
+      - name: Restore pinned Lidarr dependencies
+        run: dotnet restore Lidarr.Plugin.AIImport.sln --configfile NuGet.config -p:NuGetAudit=false -p:EnableAnalyzers=false
+
+      - name: Report inherited dependency advisories
+        continue-on-error: true
+        run: dotnet list tests/Lidarr.Plugin.AIImport.Tests/Lidarr.Plugin.AIImport.Tests.csproj package --vulnerable --include-transitive
+
+      - name: Test
+        run: >-
+          dotnet test tests/Lidarr.Plugin.AIImport.Tests/Lidarr.Plugin.AIImport.Tests.csproj
+          --no-restore --configuration Release --nologo --verbosity minimal
+          -p:NuGetAudit=false -p:EnableAnalyzers=false
+          -p:Version="$PLUGIN_VERSION" -p:AssemblyVersion="$PLUGIN_ASSEMBLY_VERSION"
+          -p:FileVersion="$PLUGIN_ASSEMBLY_VERSION" -p:InformationalVersion="$PLUGIN_VERSION"
+
+      - name: Build plugin
+        run: >-
+          dotnet build src/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.csproj
+          --no-restore --configuration Release --nologo --target:Rebuild
+          -p:NuGetAudit=false -p:EnableAnalyzers=false
+          -p:Version="$PLUGIN_VERSION" -p:AssemblyVersion="$PLUGIN_ASSEMBLY_VERSION"
+          -p:FileVersion="$PLUGIN_ASSEMBLY_VERSION" -p:InformationalVersion="$PLUGIN_VERSION"
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cp src/Lidarr.Plugin.AIImport/bin/Release/net8.0/Lidarr.Plugin.AIImport.dll artifacts/
+          cp LICENSE artifacts/LICENSE
+          printf 'Corresponding source: https://github.com/%s/tree/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" > artifacts/SOURCE.txt
+          (cd artifacts && zip -q "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip" Lidarr.Plugin.AIImport.dll LICENSE SOURCE.txt)
+          (cd artifacts && sha256sum "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip" > "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip.sha256")
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Lidarr.Plugin.AIImport-net8.0
+          path: |
+            artifacts/*.zip
+            artifacts/*.sha256
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build-test-package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: Lidarr.Plugin.AIImport-net8.0
+          path: artifacts
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            Read-only foundation release: plugin settings, OpenAI-compatible Test Connection, and strict match-proposal validation.
+
+            Minimum Lidarr Version: 3.1.2.4913
+
+            Compatibility is verified only for Lidarr 3.1.2.4913. Lidarr's assembly loader rejects incompatible internal API versions; rebuild and retest before using another Lidarr release.
+
+            Import execution is intentionally disabled because this Lidarr version can silently fall back from hardlink to copy.
+          files: |
+            artifacts/*.zip
+            artifacts/*.sha256

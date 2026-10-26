@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mshihadeh1/Lidarr.Plugin.AIImport/blob/main/schema/match-proposal.schema.json",
+  "title": "Lidarr AI Import match proposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "artistId", "albumId", "releaseId", "confidence", "explanation", "tracks"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "enum": ["proposed", "manualReview"] },
+    "artistId": { "type": ["integer", "null"], "minimum": 1 },
+    "albumId": { "type": ["integer", "null"], "minimum": 1 },
+    "releaseId": { "type": ["integer", "null"], "minimum": 1 },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "explanation": { "type": "string", "minLength": 1 },
+    "tracks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sourceFileId", "trackId", "confidence"],
+        "properties": {
+          "sourceFileId": { "type": "string", "minLength": 1, "pattern": "\\S" },
+          "trackId": { "type": "integer", "minimum": 1 },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "proposed" } } },
+      "then": {
+        "properties": {
+          "artistId": { "type": "integer", "minimum": 1 },
+          "albumId": { "type": "integer", "minimum": 1 },
+          "releaseId": { "type": "integer", "minimum": 1 },
+          "tracks": { "minItems": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "manualReview" } } },
+      "then": { "properties": { "tracks": { "maxItems": 0 } } }
+    }
+  ]
+}

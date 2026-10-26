@@ -1,0 +1,9 @@
+**/bin/
+**/obj/
+vendor/Lidarr/_output/
+vendor/Lidarr/_temp/
+artifacts/
+.vs/
+.idea/
+*.user
+*.suo

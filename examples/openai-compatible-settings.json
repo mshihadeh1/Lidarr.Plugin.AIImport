@@ -1,0 +1,9 @@
+{
+  "apiBaseUrl": "http://llama-cpp:8080/v1",
+  "apiKey": "",
+  "model": "local-model",
+  "temperature": 0.1,
+  "requestTimeoutSeconds": 60,
+  "maximumOutputTokens": 2000,
+  "customSystemPrompt": "Prefer manual review when edition metadata is ambiguous."
+}
