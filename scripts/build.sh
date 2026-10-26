@@ -23,6 +23,8 @@ mkdir -p "$ROOT/artifacts"
 docker run --rm \
   -e PLUGIN_VERSION="$VERSION" \
   -e PLUGIN_ASSEMBLY_VERSION="$ASSEMBLY_VERSION" \
+  -e HOST_UID="$(id -u)" \
+  -e HOST_GID="$(id -g)" \
   -v "$ROOT:/src" \
   -v "$CACHE_VOLUME:/root/.nuget/packages" \
   -w /src \
@@ -30,8 +32,10 @@ docker run --rm \
     set -eu
     version_args="-p:Version=$PLUGIN_VERSION -p:AssemblyVersion=$PLUGIN_ASSEMBLY_VERSION -p:FileVersion=$PLUGIN_ASSEMBLY_VERSION -p:InformationalVersion=$PLUGIN_VERSION"
     dotnet restore Lidarr.Plugin.AIImport.sln --configfile NuGet.config -p:NuGetAudit=false -p:EnableAnalyzers=false
-    dotnet test tests/Lidarr.Plugin.AIImport.Tests/Lidarr.Plugin.AIImport.Tests.csproj --no-restore --configuration Release --nologo --verbosity minimal -p:NuGetAudit=false -p:EnableAnalyzers=false $version_args
+    dotnet test Lidarr.Plugin.AIImport.sln --no-restore --configuration Release --nologo --verbosity minimal -p:NuGetAudit=false -p:EnableAnalyzers=false
     dotnet build src/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.csproj --configuration Release --target:Rebuild --no-restore --nologo -p:NuGetAudit=false -p:EnableAnalyzers=false $version_args
+    dotnet publish companion/Lidarr.AIImport.Companion/Lidarr.AIImport.Companion.csproj --configuration Release --no-restore --nologo --output /src/artifacts/companion -p:NuGetAudit=false -p:EnableAnalyzers=false
+    chown -R "$HOST_UID:$HOST_GID" /src/artifacts
   '
 
 cp "$ROOT/src/Lidarr.Plugin.AIImport/bin/Release/net8.0/Lidarr.Plugin.AIImport.dll" "$ROOT/artifacts/"

@@ -2,7 +2,7 @@
 
 A safety-first Lidarr plugin foundation for OpenAI-compatible, metadata-constrained import matching.
 
-> **Current release status:** Phase 1 plus unintegrated matching primitives. It loads in the plugin-enabled Lidarr build, exposes LLM settings under **Settings → Connect → AI Import**, tests the configured chat-completions endpoint, and includes strict match-proposal parsing for future matching work. It does **not** discover failed imports or import, move, copy, rename, retag, or delete music.
+> **Current development status:** Phase 2 read-only discovery is implemented on `feat/phase2-readonly`. The plugin still exposes and tests OpenAI-compatible settings; the companion service now discovers failed/blocked imports and emits deterministic, Lidarr-verified dry-run proposals. It does **not** import, move, copy, rename, retag, delete, or write to Lidarr.
 
 ## Why the initial release is read-only
 
@@ -54,6 +54,26 @@ The client uses `POST {baseUrl}/chat/completions` and standard OpenAI chat-compl
 
 Examples are in [examples/openai-compatible-settings.json](examples/openai-compatible-settings.json).
 
+## Phase 2 companion (read-only)
+
+Build the pinned container from the repository root:
+
+```bash
+docker build -f companion/Dockerfile -t lidarr-ai-import-companion:phase2 .
+docker run --rm -p 127.0.0.1:8080:8080 \
+  -e LIDARR_BASE_URL=http://lidarr:8686 \
+  -e LIDARR_API_KEY=replace-with-lidarr-api-key \
+  -e COMPANION_API_TOKEN=replace-with-a-random-companion-token \
+  lidarr-ai-import-companion:phase2
+```
+
+Place the container on the same Docker network as Lidarr and use Lidarr's service name rather than `localhost`. The service exposes only:
+
+- `GET /health` — reports read-only mode and the compatibility pin.
+- `GET /api/v1/failed-imports` — scans `importBlocked` and `importFailed` queue items and returns dry-run results. Send the configured token in `X-Companion-Api-Key`; missing or incorrect tokens receive HTTP 401.
+
+Discovery calls only Lidarr `GET` endpoints and refuses versions other than `3.1.2.4913`. It paginates the queue, requests manual-import metadata by download ID, strictly verifies positive IDs and source/artist/album/release/track relationships through Lidarr, excludes tracks that already have files, rejects duplicate source identities, and maps every source file one-to-one. Deterministic output passes through the same strict proposal validator used for untrusted model output. `proposed` means only that a verified metadata mapping was found; Lidarr rejection reasons remain in the response and no importability claim is made. Ambiguous or incomplete results are returned as `manualReview`; Phase 2 does not call an LLM or expose approval/import endpoints. Keep the service bound to localhost even though API routes require authentication, because discovery responses contain library metadata.
+
 ## Security and privacy
 
 - API keys use Lidarr's secret field treatment and are never included in prompts.
@@ -70,12 +90,12 @@ cd Lidarr.Plugin.AIImport
 ./scripts/build.sh
 ```
 
-The script needs Docker and produces `artifacts/Lidarr.Plugin.AIImport-v0.1.0.net8.0.zip`. It pins Lidarr source to the target image's plugin commit.
+The script needs Docker, runs both test projects, produces `artifacts/Lidarr.Plugin.AIImport-v0.1.0.net8.0.zip`, and publishes the companion under `artifacts/companion/`. It pins Lidarr source to the target image's plugin commit.
 
 ## Roadmap
 
 - **Phase 1:** feasibility, loadable plugin, settings, Test Connection — implemented.
-- **Phase 2:** read-only failed-import discovery, deterministic candidate generation, MusicBrainz/Lidarr verification, dry-run proposals.
+- **Phase 2:** read-only failed-import discovery, deterministic candidate generation, Lidarr/MusicBrainz-ID verification, dry-run proposals — implemented on `feat/phase2-readonly`.
 - **Phase 3:** manual approval and native import only after hardlink-only safety can be enforced and verified.
 - **Phase 4:** batch UX and opt-in automation after sufficient validation evidence.
 

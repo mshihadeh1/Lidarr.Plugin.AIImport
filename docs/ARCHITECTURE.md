@@ -6,6 +6,7 @@
 2. **The LLM output is untrusted.** Parse strict JSON, reject unknown fields, then verify every ID and relationship against current metadata.
 3. **Filesystem operations belong to Lidarr.** The project will not implement an independent mover/copier/tagger.
 4. **Imports are approval-gated.** Automatic import remains out of scope until manual mode has operational evidence.
+5. **Companion metadata is authenticated.** Every `/api` request requires the independently configured `X-Companion-Api-Key`; `/health` contains no library metadata and remains unauthenticated.
 
 ## Components
 
@@ -13,9 +14,9 @@
 - `Configuration/AiImportConnector`: existing Connect-provider UI and Test Connection integration.
 - `Llm/IOpenAiChatClient`: provider-neutral OpenAI chat-completions abstraction.
 - `Matching/StructuredMatchParser`: current strict runtime enforcement layer, including fenced-JSON fallback for models without native JSON-schema support. The published schema documents representable constraints but cannot detect duplicate object keys or uniqueness by only `sourceFileId`.
-- Future `Discovery`: failed queue items and `IManualImportService` candidates.
-- Future `Metadata`: deterministic MusicBrainz/Lidarr candidate retrieval and duplicate checks.
-- Future `Matching`: deterministic scorer first; LLM receives only ambiguous verified candidates.
+- Companion `Discovery`: paginated `importBlocked`/`importFailed` queue items and public manual-import API candidates.
+- Companion `Metadata`: release and track ownership retrieved from Lidarr; embedded MusicBrainz track IDs are accepted only when they match a returned Lidarr track.
+- Companion `Matching`: maximum-cardinality, maximum-score one-to-one deterministic assignment; existing library tracks are excluded. Ambiguous results remain manual review in Phase 2.
 - Future `ImportSafety`: hardlink preflight and inode/device post-verification.
 - Future companion UI: selection/review/approval only, using Lidarr's REST API.
 
@@ -23,14 +24,16 @@
 
 1. Read failed-import candidates from Lidarr.
 2. Normalize tags and filenames deterministically.
-3. Prefer embedded MusicBrainz IDs after validating them.
-4. Query only configured Lidarr/LMD/self-hosted MusicBrainz endpoints.
-5. Remove candidates incompatible with track counts, durations, disc/track numbers, existing library files, and rejection reasons.
+3. Prefer embedded MusicBrainz track IDs only when they match a track returned by Lidarr.
+4. Query only Lidarr's configured public REST API in Phase 2.
+5. Exclude existing library tracks and require every source file to receive a unique mapping based on IDs, disc/track numbers, titles, and durations.
 6. If one candidate is unambiguous, propose it without an LLM.
-7. Otherwise send minimal candidate metadata with opaque file IDs to the LLM.
-8. Strictly parse the response.
-9. Verify every returned ID is in the supplied candidate set and that track IDs belong to the selected release.
+7. In Phase 2, return ambiguous matches for manual review. A future LLM ranker may receive only minimal candidate metadata with opaque file IDs.
+8. Strictly parse any future model response.
+9. Verify every returned ID is positive and in the supplied candidate set, source IDs are unique, album/release ownership is explicit, and tracks come from the release-scoped Lidarr endpoint with matching album ownership. Apply these invariants to deterministic and future model proposals alike.
 10. Return a dry-run proposal or manual review; never invent a release.
+
+`proposed` is a metadata-mapping result, not an assertion that Lidarr can import the file. Current Lidarr rejection reasons are preserved with each source file and cannot lead to execution in Phase 2, which exposes no approval or import route.
 
 ## Import state machine (future)
 
