@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Lidarr.AIImport.Companion.Configuration;
 using Lidarr.AIImport.Companion.Models;
+using Lidarr.AIImport.Companion.Safety;
 
 namespace Lidarr.AIImport.Companion.Lidarr;
 
@@ -12,6 +13,7 @@ public interface ILidarrClient
     Task<IReadOnlyList<QueueCandidate>> GetQueueAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<SourceFileCandidate>> GetManualImportsAsync(string? downloadId, string? folder, CancellationToken cancellationToken);
     Task<IReadOnlyList<ReleaseCandidate>> GetReleaseCandidatesAsync(int albumId, CancellationToken cancellationToken);
+    Task<ImportSafetyConfiguration> GetImportSafetyConfigurationAsync(CancellationToken cancellationToken);
 }
 
 public sealed class LidarrClient : ILidarrClient
@@ -162,6 +164,24 @@ public sealed class LidarrClient : ILidarrClient
         return result;
     }
 
+    public async Task<ImportSafetyConfiguration> GetImportSafetyConfigurationAsync(CancellationToken cancellationToken)
+    {
+        using var mediaDocument = await GetJsonAsync("api/v1/config/mediamanagement", cancellationToken);
+        using var metadataDocument = await GetJsonAsync("api/v1/config/metadataprovider", cancellationToken);
+        var media = mediaDocument.RootElement;
+        var metadata = metadataDocument.RootElement;
+        return new ImportSafetyConfiguration(
+            RequiredBool(media, "copyUsingHardlinks"),
+            RequiredBool(media, "useScriptImport"),
+            String(media, "scriptImportPath"),
+            RequiredBool(media, "setPermissionsLinux"),
+            RequiredString(media, "fileDate"),
+            RequiredBool(media, "importExtraFiles"),
+            RequiredString(metadata, "writeAudioTags"),
+            RequiredBool(metadata, "scrubAudioTags"),
+            RequiredBool(metadata, "embedCoverArt"));
+    }
+
     private async Task<JsonDocument> GetJsonAsync(string relativePath, CancellationToken cancellationToken)
     {
         var baseUri = _options.LidarrBaseUrl.TrimEnd('/') + "/";
@@ -244,4 +264,8 @@ public sealed class LidarrClient : ILidarrClient
         item.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? value.GetBoolean()
             : throw new InvalidDataException($"Lidarr response field {name} must be a boolean.");
+    private static string RequiredString(JsonElement item, string name) =>
+        item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString())
+            ? value.GetString()!
+            : throw new InvalidDataException($"Lidarr response field {name} must be a non-empty string.");
 }

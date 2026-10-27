@@ -13,6 +13,8 @@ fi
 BASE_VERSION="${VERSION%%-*}"
 ASSEMBLY_VERSION="${BASE_VERSION}.0"
 
+bash "$ROOT/tests/hardlink-import-script-tests.sh"
+
 if [[ ! -f "$ROOT/vendor/Lidarr/src/NzbDrone.Core/Lidarr.Core.csproj" ]]; then
   git -C "$ROOT" submodule update --init --recursive
 fi
@@ -39,6 +41,8 @@ docker run --rm \
   '
 
 cp "$ROOT/src/Lidarr.Plugin.AIImport/bin/Release/net8.0/Lidarr.Plugin.AIImport.dll" "$ROOT/artifacts/"
+cp "$ROOT/scripts/lidarr-hardlink-import" "$ROOT/artifacts/"
+chmod 0755 "$ROOT/artifacts/lidarr-hardlink-import"
 cp "$ROOT/LICENSE" "$ROOT/artifacts/LICENSE"
 commit="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'uncommitted-source-tree')"
 printf 'Corresponding source: https://github.com/mshihadeh1/Lidarr.Plugin.AIImport/tree/%s\n' "$commit" > "$ROOT/artifacts/SOURCE.txt"
@@ -52,7 +56,7 @@ artifacts = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
 archive = artifacts / f"Lidarr.Plugin.AIImport-v{version}.net8.0.zip"
 with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
-    for name in ("Lidarr.Plugin.AIImport.dll", "LICENSE", "SOURCE.txt"):
+    for name in ("Lidarr.Plugin.AIImport.dll", "lidarr-hardlink-import", "LICENSE", "SOURCE.txt"):
         output.write(artifacts / name, name)
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 (archive.with_suffix(archive.suffix + ".sha256")).write_text(f"{digest}  {archive.name}\n", encoding="utf-8")

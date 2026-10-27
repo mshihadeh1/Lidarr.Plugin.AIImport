@@ -1,5 +1,6 @@
 using Lidarr.AIImport.Companion.Discovery;
 using Lidarr.AIImport.Companion.Lidarr;
+using Lidarr.AIImport.Companion.Safety;
 
 namespace Lidarr.AIImport.Companion.Tests;
 
@@ -206,5 +207,8 @@ public sealed class FailedImportDiscoveryServiceTests
                 ? releases
                 : (IReadOnlyList<ReleaseCandidate>)Array.Empty<ReleaseCandidate>());
         }
+
+        public Task<ImportSafetyConfiguration> GetImportSafetyConfigurationAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new ImportSafetyConfiguration(true, true, "/script", false, "none", false, "no", false, false));
     }
 }

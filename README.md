@@ -2,11 +2,11 @@
 
 A safety-first Lidarr plugin foundation for OpenAI-compatible, metadata-constrained import matching.
 
-> **Current development status:** Phase 2 read-only discovery is implemented on `feat/phase2-readonly`. The plugin still exposes and tests OpenAI-compatible settings; the companion service now discovers failed/blocked imports and emits deterministic, Lidarr-verified dry-run proposals. It does **not** import, move, copy, rename, retag, delete, or write to Lidarr.
+> **Current development status:** Phase 2 read-only discovery is merged. Phase 3 now includes a packaged hardlink-only import script, executable-mode repair on plugin startup, and an authenticated read-only prerequisite assessment. Approval/import execution remains disabled.
 
 ## Why the initial release is read-only
 
-The investigated Lidarr build can enumerate and execute manual imports, but its native `Copy` path uses `HardLinkOrCopy`: when hardlink creation fails it silently falls back to a copy. That cannot satisfy this project's hardlink-only requirement. Import execution stays disabled until a preflight and post-import verification design can guarantee device/inode preservation.
+Lidarr's ordinary `Copy` path uses `HardLinkOrCopy`: when hardlink creation fails it silently falls back to a copy. The Phase 3 script demonstrates interception using only `ln`, device/inode verification, and no defer-on-failure behavior. Independent review found unavoidable pathname TOCTOU limitations in the shell implementation, so it is not an execution-ready security boundary. Execution remains disabled until a descriptor-safe transfer implementation and fail-closed approval/reconciliation are verified.
 
 See [docs/FEASIBILITY.md](docs/FEASIBILITY.md) for source-backed findings, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the staged design, and [docs/VERIFICATION.md](docs/VERIFICATION.md) for the disposable-container test record.
 
@@ -32,10 +32,11 @@ The Lidarr installer selects a release asset whose name contains `net8.0.zip`; r
 
 ### Manual Docker installation
 
-Extract the release DLL under the persistent `/config/plugins/<owner>/<repository>/` hierarchy:
+Extract the release files under the persistent `/config/plugins/<owner>/<repository>/` hierarchy:
 
 ```text
 /config/plugins/mshihadeh1/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.dll
+/config/plugins/mshihadeh1/Lidarr.Plugin.AIImport/lidarr-hardlink-import
 ```
 
 Restart the container. Do not install into `/app/lidarr`; that path is replaced with image updates.
@@ -54,25 +55,29 @@ The client uses `POST {baseUrl}/chat/completions` and standard OpenAI chat-compl
 
 Examples are in [examples/openai-compatible-settings.json](examples/openai-compatible-settings.json).
 
-## Phase 2 companion (read-only)
+## Companion (read-only)
 
 Build the pinned container from the repository root:
 
 ```bash
-docker build -f companion/Dockerfile -t lidarr-ai-import-companion:phase2 .
+docker build -f companion/Dockerfile -t lidarr-ai-import-companion:local .
 docker run --rm -p 127.0.0.1:8080:8080 \
   -e LIDARR_BASE_URL=http://lidarr:8686 \
   -e LIDARR_API_KEY=replace-with-lidarr-api-key \
   -e COMPANION_API_TOKEN=replace-with-a-random-companion-token \
-  lidarr-ai-import-companion:phase2
+  -e HARDLINK_SCRIPT_PATH=/config/plugins/mshihadeh1/Lidarr.Plugin.AIImport/lidarr-hardlink-import \
+  lidarr-ai-import-companion:local
 ```
 
 Place the container on the same Docker network as Lidarr and use Lidarr's service name rather than `localhost`. The service exposes only:
 
 - `GET /health` — reports read-only mode and the compatibility pin.
 - `GET /api/v1/failed-imports` — scans `importBlocked` and `importFailed` queue items and returns dry-run results. Send the configured token in `X-Companion-Api-Key`; missing or incorrect tokens receive HTTP 401.
+- `GET /api/v1/import-safety` — reads Lidarr's media-management and metadata settings and reports whether the hardlink-script prerequisites are satisfied. It always reports `executionEnabled: false` in this phase.
 
 Discovery calls only Lidarr `GET` endpoints and refuses versions other than `3.1.2.4913`. It paginates the queue, requests manual-import metadata by download ID, strictly verifies positive IDs and source/artist/album/release/track relationships through Lidarr, excludes tracks that already have files, rejects duplicate source identities, and maps every source file one-to-one. Deterministic output passes through the same strict proposal validator used for untrusted model output. `proposed` means only that a verified metadata mapping was found; Lidarr rejection reasons remain in the response and no importability claim is made. Ambiguous or incomplete results are returned as `manualReview`; Phase 2 does not call an LLM or expose approval/import endpoints. Keep the service bound to localhost even though API routes require authentication, because discovery responses contain library metadata.
+
+Lidarr's script-import setting is global. If the packaged script is configured, every Lidarr transfer requested as `HardLinkOrCopy` becomes strict hardlink-or-fail, including imports not initiated by this project. This deliberately prevents silent copying but can make unrelated cross-device imports fail.
 
 ## Security and privacy
 
@@ -95,8 +100,8 @@ The script needs Docker, runs both test projects, produces `artifacts/Lidarr.Plu
 ## Roadmap
 
 - **Phase 1:** feasibility, loadable plugin, settings, Test Connection — implemented.
-- **Phase 2:** read-only failed-import discovery, deterministic candidate generation, Lidarr/MusicBrainz-ID verification, dry-run proposals — implemented on `feat/phase2-readonly`.
-- **Phase 3:** manual approval and native import only after hardlink-only safety can be enforced and verified.
+- **Phase 2:** read-only failed-import discovery, deterministic candidate generation, Lidarr/MusicBrainz-ID verification, dry-run proposals — merged.
+- **Phase 3:** hardlink-only transfer primitive and read-only safety assessment — implemented locally; approval/import execution remains gated pending fail-closed reconciliation.
 - **Phase 4:** batch UX and opt-in automation after sufficient validation evidence.
 
 ## License

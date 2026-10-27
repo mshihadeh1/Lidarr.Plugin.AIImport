@@ -62,6 +62,15 @@ jobs:
           -p:Version="$PLUGIN_VERSION" -p:AssemblyVersion="$PLUGIN_ASSEMBLY_VERSION"
           -p:FileVersion="$PLUGIN_ASSEMBLY_VERSION" -p:InformationalVersion="$PLUGIN_VERSION"
 
+      - name: Test companion
+        run: >-
+          dotnet test tests/Lidarr.AIImport.Companion.Tests/Lidarr.AIImport.Companion.Tests.csproj
+          --no-restore --configuration Release --nologo --verbosity minimal
+          -p:NuGetAudit=false -p:EnableAnalyzers=false
+
+      - name: Test hardlink script
+        run: bash tests/hardlink-import-script-tests.sh
+
       - name: Build plugin
         run: >-
           dotnet build src/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.csproj
@@ -76,9 +85,11 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           cp src/Lidarr.Plugin.AIImport/bin/Release/net8.0/Lidarr.Plugin.AIImport.dll artifacts/
+          cp scripts/lidarr-hardlink-import artifacts/lidarr-hardlink-import
+          chmod 0755 artifacts/lidarr-hardlink-import
           cp LICENSE artifacts/LICENSE
           printf 'Corresponding source: https://github.com/%s/tree/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" > artifacts/SOURCE.txt
-          (cd artifacts && zip -q "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip" Lidarr.Plugin.AIImport.dll LICENSE SOURCE.txt)
+          (cd artifacts && zip -q "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip" Lidarr.Plugin.AIImport.dll lidarr-hardlink-import LICENSE SOURCE.txt)
           (cd artifacts && sha256sum "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip" > "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip.sha256")
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
