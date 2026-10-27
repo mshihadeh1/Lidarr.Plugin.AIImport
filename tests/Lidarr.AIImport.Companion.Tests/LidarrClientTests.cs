@@ -26,6 +26,7 @@ public sealed class LidarrClientTests
         var sameFiles = await client.GetManualImportsAsync("download id", null, CancellationToken.None);
         var otherDownloadFiles = await client.GetManualImportsAsync("other download", null, CancellationToken.None);
         var releases = await client.GetReleaseCandidatesAsync(10, CancellationToken.None);
+        var safety = await client.GetImportSafetyConfigurationAsync(CancellationToken.None);
 
         Assert.Multiple(() =>
         {
@@ -39,6 +40,12 @@ public sealed class LidarrClientTests
             Assert.That(files.Single().Id, Is.Not.EqualTo(otherDownloadFiles.Single().Id));
             Assert.That(files.Single().Id, Does.Not.Contain("downloads"));
             Assert.That(releases.Single().Tracks, Has.Count.EqualTo(1));
+            Assert.That(safety.CopyUsingHardlinks, Is.True);
+            Assert.That(safety.UseScriptImport, Is.True);
+            Assert.That(safety.ScriptImportPath, Is.EqualTo("/config/lidarr-ai-import/lidarr-hardlink-import"));
+            Assert.That(safety.SetPermissionsLinux, Is.False);
+            Assert.That(safety.FileDate, Is.EqualTo("none"));
+            Assert.That(safety.WriteAudioTags, Is.EqualTo("no"));
             Assert.That(handler.Requests, Has.All.Matches<HttpRequestMessage>(r => r.Method == HttpMethod.Get));
             Assert.That(handler.Requests, Has.All.Matches<HttpRequestMessage>(r => r.Headers.GetValues("X-Api-Key").Single() == "test-key"));
             Assert.That(handler.Requests.Any(r => r.RequestUri!.Query.Contains("downloadId=download%20id")), Is.True);
@@ -114,6 +121,20 @@ public sealed class LidarrClientTests
             client.GetManualImportsAsync("download", null, CancellationToken.None));
     }
 
+    [TestCase("fileDate")]
+    [TestCase("writeAudioTags")]
+    public void Import_safety_rejects_numeric_enum_values(string fault)
+    {
+        var client = new LidarrClient(new HttpClient(new InvalidSafetyConfigurationHandler(fault)), new CompanionOptions
+        {
+            LidarrBaseUrl = "http://lidarr:8686",
+            LidarrApiKey = "test-key"
+        });
+
+        Assert.ThrowsAsync<InvalidDataException>(() =>
+            client.GetImportSafetyConfigurationAsync(CancellationToken.None));
+    }
+
     private sealed class FixtureHandler : HttpMessageHandler
     {
         public List<HttpRequestMessage> Requests { get; } = new();
@@ -129,6 +150,8 @@ public sealed class LidarrClientTests
                 "/api/v1/manualimport" => """[{"id":1,"path":"/downloads/album/01.flac","name":"01.flac","size":100,"artist":{"id":5,"artistName":"Artist"},"album":{"id":10,"title":"Album"},"albumReleaseId":101,"tracks":[],"rejections":[],"audioTags":{"title":"Song","artistTitle":"Artist","albumTitle":"Album","discNumber":1,"trackNumbers":[1],"duration":"00:03:00"}}]""",
                 "/api/v1/album/10" => """{"id":10,"title":"Album","artist":{"id":5,"artistName":"Artist"},"releases":[{"id":101,"albumId":10,"foreignReleaseId":"release-101","title":"Album","trackCount":1,"disambiguation":"","monitored":true}]}""",
                 "/api/v1/track" => """[{"id":1001,"albumId":10,"foreignTrackId":"track-1","foreignRecordingId":"recording-1","trackNumber":"1","title":"Song","duration":180000,"mediumNumber":1,"hasFile":false}]""",
+                "/api/v1/config/mediamanagement" => """{"copyUsingHardlinks":true,"useScriptImport":true,"scriptImportPath":"/config/lidarr-ai-import/lidarr-hardlink-import","setPermissionsLinux":false,"fileDate":"none","importExtraFiles":false}""",
+                "/api/v1/config/metadataprovider" => """{"writeAudioTags":"no","scrubAudioTags":false,"embedCoverArt":false}""",
                 _ => throw new AssertionException($"Unexpected request: {request.RequestUri}")
             };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
@@ -164,6 +187,23 @@ public sealed class LidarrClientTests
         {
             const string item = """{"path":"/downloads/album/01.flac","name":"01.flac","rejections":[],"audioTags":{"title":"Song"}}""";
             var json = $"[{item},{item}]";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    private sealed class InvalidSafetyConfigurationHandler(string fault) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var media = request.RequestUri!.AbsolutePath.EndsWith("mediamanagement", StringComparison.Ordinal);
+            var fileDate = fault == "fileDate" ? "0" : "\"none\"";
+            var writeAudioTags = fault == "writeAudioTags" ? "0" : "\"no\"";
+            var json = media
+                ? $$"""{"copyUsingHardlinks":true,"useScriptImport":true,"scriptImportPath":"/script","setPermissionsLinux":false,"fileDate":{{fileDate}},"importExtraFiles":false}"""
+                : $$"""{"writeAudioTags":{{writeAudioTags}},"scrubAudioTags":false,"embedCoverArt":false}""";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")

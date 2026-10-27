@@ -1,0 +1,60 @@
+#!/bin/sh
+set -eu
+
+# Lidarr exit code 3 means: defer this transfer to Lidarr.
+if [ "${lidarr_transfermode:-}" != "HardLinkOrCopy" ]; then
+    exit 3
+fi
+
+source_path=${1-}
+destination_path=${2-}
+
+if [ -z "$source_path" ] || [ -z "$destination_path" ]; then
+    printf '%s\n' 'hardlink import: source and destination arguments are required' >&2
+    exit 20
+fi
+
+if [ "$source_path" != "${lidarr_sourcepath:-}" ] || [ "$destination_path" != "${lidarr_destinationpath:-}" ]; then
+    printf '%s\n' 'hardlink import: arguments do not match Lidarr environment paths' >&2
+    exit 21
+fi
+
+if [ ! -f "$source_path" ] || [ -L "$source_path" ]; then
+    printf '%s\n' 'hardlink import: source must be an existing regular non-symlink file' >&2
+    exit 22
+fi
+
+if [ -e "$destination_path" ] || [ -L "$destination_path" ]; then
+    printf '%s\n' 'hardlink import: destination already exists' >&2
+    exit 23
+fi
+
+created_destination=0
+cleanup_destination() {
+    if [ "$created_destination" -eq 1 ]; then
+        current_source_identity=$(stat -c '%d:%i' -- "$source_path" 2>/dev/null || true)
+        current_destination_identity=$(stat -c '%d:%i' -- "$destination_path" 2>/dev/null || true)
+        if [ -n "$current_source_identity" ] && [ "$current_source_identity" = "$current_destination_identity" ]; then
+            rm -f -- "$destination_path"
+        fi
+    fi
+}
+trap cleanup_destination EXIT HUP INT TERM
+
+if ! ln -- "$source_path" "$destination_path"; then
+    printf '%s\n' 'hardlink import: hardlink creation failed; copy fallback is forbidden' >&2
+    exit 24
+fi
+created_destination=1
+
+source_identity=$(stat -c '%d:%i' -- "$source_path") || exit 25
+destination_identity=$(stat -c '%d:%i' -- "$destination_path") || exit 25
+if [ "$source_identity" != "$destination_identity" ]; then
+    printf '%s\n' 'hardlink import: post-create device/inode verification failed' >&2
+    exit 26
+fi
+
+created_destination=0
+trap - EXIT HUP INT TERM
+printf '%s\n' 'hardlink import: verified'
+exit 0

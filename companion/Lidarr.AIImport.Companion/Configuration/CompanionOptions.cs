@@ -5,6 +5,7 @@ public sealed class CompanionOptions
     public string LidarrBaseUrl { get; set; } = string.Empty;
     public string LidarrApiKey { get; set; } = string.Empty;
     public string CompanionApiToken { get; set; } = string.Empty;
+    public string HardlinkScriptPath { get; set; } = string.Empty;
     public string LlmBaseUrl { get; set; } = string.Empty;
     public string LlmApiKey { get; set; } = string.Empty;
     public string LlmModel { get; set; } = string.Empty;

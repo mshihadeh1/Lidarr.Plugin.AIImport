@@ -46,3 +46,17 @@ Verified on 2026-10-26 UTC from branch `feat/phase2-readonly`:
 - SHA-256 hashes of the disposable container's `lidarr.db` and `lidarr.db-wal` were identical before and after discovery.
 
 The live smoke container had no failed queue item, so deterministic proposal behavior is verified by the fixture-backed full discovery pipeline rather than by mutating Lidarr to manufacture a failure. No real Lidarr data was used or modified.
+
+## Phase 3 hardlink foundation
+
+Verified on 2026-10-26 against the same disposable Lidarr container:
+
+- `./scripts/build.sh` passed 69 managed tests (29 plugin and 40 companion), the shell hardlink integration suite, and a zero-warning/zero-error rebuild.
+- Plugin startup repaired the extracted script mode from `0644` to `0755`; this is necessary because Lidarr's ZIP extractor does not restore Unix executable bits.
+- The authenticated safety endpoint returned `configurationPrerequisitesSatisfied: true`, `executionEnabled: false`, and no blockers only after every source-mutating setting was disabled and the exact script path was configured. Unauthenticated access returned HTTP 401.
+- A real native `ManualImport` of the bundled `nin.flac` fixture created `/music/Nine Inch Nails/nin-hardlink2.flac`. Source and destination had the same device/inode; source SHA-256, size, mtime, mode, UID, and GID were unchanged. Lidarr created the track-file record and `trackFileImported` history.
+- A cross-device source under `/dev/shm` caused script exit 24. No destination and no additional track-file record were created; logs showed that copy fallback was forbidden.
+- Lidarr nevertheless marked that failed command `completed`. Future orchestration must reconcile track-file and inode state rather than trust command status.
+- Independent security review found that the shell implementation cannot eliminate pathname TOCTOU races or make failure cleanup descriptor-safe. The safety response reports this limitation and `executionEnabled` remains `false`; an approval/import route must not be added until a descriptor-safe native helper or pinned Lidarr implementation replaces the shell primitive.
+
+All Phase 3 operations above used only disposable fixture data. Approval/import routes remain absent.

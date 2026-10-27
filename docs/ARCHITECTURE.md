@@ -17,7 +17,8 @@
 - Companion `Discovery`: paginated `importBlocked`/`importFailed` queue items and public manual-import API candidates.
 - Companion `Metadata`: release and track ownership retrieved from Lidarr; embedded MusicBrainz track IDs are accepted only when they match a returned Lidarr track.
 - Companion `Matching`: maximum-cardinality, maximum-score one-to-one deterministic assignment; existing library tracks are excluded. Ambiguous results remain manual review in Phase 2.
-- Future `ImportSafety`: hardlink preflight and inode/device post-verification.
+- Companion `ImportSafety`: authenticated read-only assessment of the exact script path and every Lidarr setting that could copy, retag, chmod, timestamp, embed artwork, or import extras. This assessment does not enable execution.
+- Packaged `lidarr-hardlink-import`: demonstrates interception of `HardLinkOrCopy`, invokes `ln` without a copy path, verifies source/destination device+inode identity, and returns a hard failure rather than Lidarr's defer code when linking fails. It remains a tested feasibility primitive, not an execution-ready security boundary, because shell pathname operations cannot eliminate TOCTOU races.
 - Future companion UI: selection/review/approval only, using Lidarr's REST API.
 
 ## Matching pipeline
@@ -40,6 +41,8 @@
 `Discovered → Proposed → Validated → Approved → HardlinkPreflightPassed → NativeImportQueued → NativeImportSucceeded → HardlinkVerified`
 
 Every transition is append-only and idempotent by a digest of download ID, source file identity, selected release, mappings, and settings version. Any validation change invalidates approval.
+
+Lidarr 3.1.2.4913 can report the `ManualImport` command as completed even when an individual import script fails. Command status is therefore not proof of import success. Future execution must reconcile the expected track-file record and source/destination identity; it must never retry an indeterminate command automatically.
 
 ## Data minimization
 

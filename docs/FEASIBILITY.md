@@ -56,7 +56,7 @@ Smallest supported UX:
 - A narrowly scoped companion web UI/service for selection, proposal review, and approval, communicating only with Lidarr's public REST API.
 - If a future plugin SDK adds frontend slots, move that UX into Lidarr without changing the matching core.
 
-## Hardlink feasibility and blocker
+## Hardlink feasibility and controlled proof
 
 Lidarr's `ImportMode` values are `Auto`, `Move`, and `Copy`; there is no hardlink-only mode: [`ImportMode.cs`](https://github.com/Lidarr/Lidarr/blob/e42a7ca4fd633e021d69da7daa0368b870b0282e/src/NzbDrone.Core/MediaFiles/TrackImport/ImportMode.cs).
 
@@ -68,16 +68,24 @@ Consequences:
 - Docker paths that look related can still be different mounts/devices.
 - Native Lidarr does not expose the actual transfer mode in the manual-import command result.
 
-**Safety decision:** this release performs no imports. Phase 3 must, before command submission:
+The built-in import-script hook runs before `DiskTransferService`. Exit code `0` tells Lidarr the transfer completed, exit code `3` defers to Lidarr's unsafe `HardLinkOrCopy`, and every other code fails that file. The packaged script never returns `3` for a requested `HardLinkOrCopy`: it creates a hardlink with `ln`, verifies device/inode equality, and otherwise fails.
+
+This was exercised through Lidarr's real `ManualImport` command in a disposable 3.1.2.4913 container. Same-filesystem import preserved source hash, size, mtime, mode, UID/GID, and device/inode while creating native track-file/history records. A cross-device import exited `24`, created no destination, and created no track-file record.
+
+Two additional constraints were discovered:
+
+- Lidarr's `StringDictionary` lowercases script environment keys on Linux; the script must read `lidarr_transfermode`, `lidarr_sourcepath`, and `lidarr_destinationpath`.
+- A `ManualImport` command can still report `completed` and “Manually imported 1 files” after the individual script import failed. Command status alone is unsafe evidence.
+
+**Safety decision:** approval/import routes remain disabled. The current Phase 3 foundation:
 
 1. Require `CopyUsingHardlinks=true`, `replaceExistingFiles=false`, and `ImportMode=Copy`.
-2. Resolve the exact destination path using Lidarr naming rules.
-3. Compare filesystem device IDs inside the Lidarr mount namespace.
-4. Create and remove a temporary hardlink probe across the exact source/destination parent filesystems.
-5. Refuse before import if any check fails.
-6. After native import, compare source/destination device+inode and mark the operation failed if they differ.
+2. Requires Lidarr script import to point exactly at the packaged script.
+3. Requires tag writing/scrubbing, embedded artwork, file-date changes, permission changes, and extra-file imports to be disabled.
+4. Exposes these checks through authenticated read-only `GET /api/v1/import-safety`, with `executionEnabled=false`.
+5. Packages and tests the no-copy script, including same-device success, cross-device failure, collision refusal, and argument/environment validation.
 
-A true hardlink-only guarantee requires either an upstream Lidarr `HardLink` import mode (preferred) or a narrowly maintained compatible build. The companion cannot replace Lidarr's file engine.
+The script proves that Script Import can prevent the ordinary copy fallback while retaining Lidarr's native database/history pipeline. It does not prove a race-free security boundary: independent review identified pathname TOCTOU and failure-cleanup races that a POSIX shell implementation cannot eliminate. A finished approval flow therefore requires a descriptor-safe native helper or pinned Lidarr implementation, plus fresh proposal/configuration validation, exact post-import reconciliation, idempotency, and explicit handling of Lidarr's false-positive command completion. A native upstream `HardLink` mode remains the preferred long-term architecture.
 
 ## Compatibility limits
 

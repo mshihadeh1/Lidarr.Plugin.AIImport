@@ -5,13 +5,15 @@ using Lidarr.AIImport.Companion.Discovery;
 using Lidarr.AIImport.Companion.Lidarr;
 using Lidarr.AIImport.Companion.Matching;
 using Lidarr.AIImport.Companion.Security;
+using Lidarr.AIImport.Companion.Safety;
 
 var builder = WebApplication.CreateBuilder(args);
 var options = new CompanionOptions
 {
     LidarrBaseUrl = builder.Configuration["LIDARR_BASE_URL"] ?? string.Empty,
     LidarrApiKey = builder.Configuration["LIDARR_API_KEY"] ?? string.Empty,
-    CompanionApiToken = builder.Configuration["COMPANION_API_TOKEN"] ?? string.Empty
+    CompanionApiToken = builder.Configuration["COMPANION_API_TOKEN"] ?? string.Empty,
+    HardlinkScriptPath = builder.Configuration["HARDLINK_SCRIPT_PATH"] ?? string.Empty
 };
 options.ValidateDiscovery();
 
@@ -19,6 +21,7 @@ builder.Services.ConfigureHttpJsonOptions(json =>
     json.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)));
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<DeterministicMatcher>();
+builder.Services.AddSingleton<ImportSafetyService>();
 builder.Services.AddSingleton<IFailedImportDiscoveryService, FailedImportDiscoveryService>();
 builder.Services.AddHttpClient<ILidarrClient, LidarrClient>(client =>
 {
@@ -48,6 +51,13 @@ app.MapGet("/api/v1/failed-imports", async (
     IFailedImportDiscoveryService discovery,
     CancellationToken cancellationToken) =>
     Results.Ok(await discovery.DiscoverAsync(cancellationToken)));
+app.MapGet("/api/v1/import-safety", async (
+    ILidarrClient lidarr,
+    ImportSafetyService safety,
+    CancellationToken cancellationToken) =>
+    Results.Ok(safety.Assess(
+        await lidarr.GetSystemStatusAsync(cancellationToken),
+        await lidarr.GetImportSafetyConfigurationAsync(cancellationToken))));
 app.Run();
 
 public partial class Program;
