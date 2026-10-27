@@ -116,13 +116,13 @@ jobs:
         with:
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            Read-only foundation release: plugin settings, OpenAI-compatible Test Connection, and strict match-proposal validation.
+            Read-only foundation release: plugin settings, authenticated failed-import discovery, deterministic match proposals, and a configuration-only hardlink safety assessment.
 
-            Minimum Lidarr Version: 3.1.2.4913
+            Supported Lidarr Version: exactly 3.1.2.4913
 
-            Compatibility is verified only for Lidarr 3.1.2.4913. Lidarr's assembly loader rejects incompatible internal API versions; rebuild and retest before using another Lidarr release.
+            The packaged Script Import artifact demonstrates prevention of Lidarr's silent copy fallback, but it is not an execution-ready security boundary. Independent review identified pathname TOCTOU and failure-cleanup races in the shell primitive, and Lidarr command completion does not prove per-file success.
 
-            Import execution is intentionally disabled because this Lidarr version can silently fall back from hardlink to copy.
+            Import execution and approval routes remain intentionally absent. A descriptor-safe transfer implementation and fail-closed post-import reconciliation are required before execution can be enabled.
           files: |
             artifacts/*.zip
             artifacts/*.sha256
