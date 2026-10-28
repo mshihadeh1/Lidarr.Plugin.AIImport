@@ -6,6 +6,11 @@ public sealed class CompanionOptions
     public string LidarrApiKey { get; set; } = string.Empty;
     public string CompanionApiToken { get; set; } = string.Empty;
     public string HardlinkScriptPath { get; set; } = string.Empty;
+    public string NativeHelperPath { get; set; } = "/app/lidarr-hardlink-import";
+    public string ApprovalStorePath { get; set; } = "/data/approvals.json";
+    public string AuthorizationDirectory { get; set; } = "/data/authorizations";
+    public bool AuthorizationDeploymentConfirmed { get; set; }
+    public int ApprovalLifetimeMinutes { get; set; } = 15;
     public string LlmBaseUrl { get; set; } = string.Empty;
     public string LlmApiKey { get; set; } = string.Empty;
     public string LlmModel { get; set; } = string.Empty;
@@ -16,6 +21,11 @@ public sealed class CompanionOptions
     public void Validate()
     {
         ValidateDiscovery();
+        ValidateLlm();
+    }
+
+    public void ValidateLlm()
+    {
         ValidateBaseUrl(LlmBaseUrl, nameof(LlmBaseUrl));
         if (string.IsNullOrWhiteSpace(LlmModel))
         {
@@ -37,6 +47,15 @@ public sealed class CompanionOptions
         if (string.IsNullOrWhiteSpace(CompanionApiToken))
         {
             throw new InvalidOperationException("CompanionApiToken is required.");
+        }
+        if (!Path.IsPathFullyQualified(NativeHelperPath) || !Path.IsPathFullyQualified(ApprovalStorePath) ||
+            !Path.IsPathFullyQualified(AuthorizationDirectory))
+        {
+            throw new InvalidOperationException("NativeHelperPath, ApprovalStorePath, and AuthorizationDirectory must be absolute paths.");
+        }
+        if (ApprovalLifetimeMinutes is < 1 or > 1440)
+        {
+            throw new InvalidOperationException("ApprovalLifetimeMinutes must be between 1 and 1440.");
         }
     }
 

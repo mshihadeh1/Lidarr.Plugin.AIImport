@@ -2,11 +2,11 @@
 
 A safety-first Lidarr plugin foundation for OpenAI-compatible, metadata-constrained import matching.
 
-> **Current development status:** Phase 2 read-only discovery is merged. Phase 3 now includes a packaged hardlink-only import script, executable-mode repair on plugin startup, and an authenticated read-only prerequisite assessment. Approval/import execution remains disabled.
+> **Current development status:** v1.0 release candidate. Authenticated approval, strict hardlink execution, durable command receipts, and per-file reconciliation are implemented. This build has not yet completed a real torrent-client recheck; back up Lidarr and test one expendable album before broader use.
 
-## Why the initial release is read-only
+## Why execution is fail-closed
 
-Lidarr's ordinary `Copy` path uses `HardLinkOrCopy`: when hardlink creation fails it silently falls back to a copy. The Phase 3 script demonstrates interception using only `ln`, device/inode verification, and no defer-on-failure behavior. Independent review found unavoidable pathname TOCTOU limitations in the shell implementation, so it is not an execution-ready security boundary. Execution remains disabled until a descriptor-safe transfer implementation and fail-closed approval/reconciliation are verified.
+Lidarr's ordinary `Copy` path uses `HardLinkOrCopy`: when hardlink creation fails it can fall back to a copy. This project replaces that boundary with a native descriptor-bound helper that either creates the authorized hardlink or fails. Approvals are short-lived and single-use. A submitted import is not successful until native results, source and destination inode identity, Lidarr history, track-file state, and track bindings all reconcile. Unknown outcomes are never retried automatically.
 
 See [docs/FEASIBILITY.md](docs/FEASIBILITY.md) for source-backed findings, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the staged design, and [docs/VERIFICATION.md](docs/VERIFICATION.md) for the disposable-container test record.
 
@@ -28,7 +28,7 @@ See [docs/FEASIBILITY.md](docs/FEASIBILITY.md) for source-backed findings, [docs
 4. Restart Lidarr when prompted.
 5. Open **Settings → Connect**, add **AI Import**, configure the endpoint, and click **Test**.
 
-The Lidarr installer selects a release asset whose name contains `net8.0.zip`; release notes must include `Minimum Lidarr Version: 3.1.2.4913`.
+The Lidarr installer selects a release asset whose name contains `net8.0.zip`; release notes must include `Minimum Lidarr Version: 3.1.2.4913` for installer compatibility and separately state that `3.1.2.4913` is the exact tested and supported version. Newer releases require separate compatibility verification.
 
 ### Manual Docker installation
 
@@ -55,27 +55,65 @@ The client uses `POST {baseUrl}/chat/completions` and standard OpenAI chat-compl
 
 Examples are in [examples/openai-compatible-settings.json](examples/openai-compatible-settings.json).
 
-## Companion (read-only)
+## Companion
 
 Build the pinned container from the repository root:
 
 ```bash
 docker build -f companion/Dockerfile -t lidarr-ai-import-companion:local .
-docker run --rm -p 127.0.0.1:8080:8080 \
+sudo install -d -m 0700 -o 1000 -g 1000 /host/ai-import-data
+docker run --rm --name lidarr-ai-import --network media --user 1000:1000 \
+  -p 127.0.0.1:8080:8080 \
   -e LIDARR_BASE_URL=http://lidarr:8686 \
   -e LIDARR_API_KEY=replace-with-lidarr-api-key \
   -e COMPANION_API_TOKEN=replace-with-a-random-companion-token \
   -e HARDLINK_SCRIPT_PATH=/config/plugins/mshihadeh1/Lidarr.Plugin.AIImport/lidarr-hardlink-import \
+  -e AIIMPORT_AUTHORIZATION_DIR=/data/authorizations \
+  -e AUTHORIZATION_DEPLOYMENT_CONFIRMED=true \
+  -v /host/ai-import-data:/data \
+  -v /host/downloads:/downloads \
+  -v /host/music:/music \
   lidarr-ai-import-companion:local
 ```
 
-Place the container on the same Docker network as Lidarr and use Lidarr's service name rather than `localhost`. The service exposes only:
+Replace `1000:1000` with the UID/GID used by Lidarr. The companion and Lidarr-launched helper must run as the same UID because authorization directories and records use owner-only permissions. Place the container on the same Docker network as Lidarr and use Lidarr's service name rather than `localhost`. Mount `/host/ai-import-data` into Lidarr at `/data` too, set `AIIMPORT_AUTHORIZATION_DIR=/data/authorizations` in **both** processes, and mount download and library paths at the exact same paths in both containers. Set `AUTHORIZATION_DEPLOYMENT_CONFIRMED=true` only after those checks; otherwise the safety endpoint keeps execution disabled. Every `/api` request requires `X-Companion-Api-Key`.
 
-- `GET /health` — reports read-only mode and the compatibility pin.
+The corresponding Lidarr service settings are:
+
+```yaml
+services:
+  lidarr:
+    user: "1000:1000"
+    environment:
+      AIIMPORT_AUTHORIZATION_DIR: /data/authorizations
+    volumes:
+      - /host/ai-import-data:/data
+      - /host/downloads:/downloads
+      - /host/music:/music
+```
+
+- `GET /health` — reports approval-required mode and the compatibility pin.
 - `GET /api/v1/failed-imports` — scans `importBlocked` and `importFailed` queue items and returns dry-run results. Send the configured token in `X-Companion-Api-Key`; missing or incorrect tokens receive HTTP 401.
-- `GET /api/v1/import-safety` — reads Lidarr's media-management and metadata settings and reports whether the hardlink-script prerequisites are satisfied. It always reports `executionEnabled: false` in this phase.
+- `GET /api/v1/import-safety` — reports whether every hardlink safety prerequisite is satisfied.
+- `POST /api/v1/analyses/{analysisId}/approve-import` — revalidates the complete plan and returns a short-lived approval ID and bearer token.
+- `POST /api/v1/approvals/{approvalId}/status` with `{"token":"..."}` — retrieves durable execution state, including terminal success after a lost reconciliation response.
+- `POST /api/v1/approvals/{approvalId}/execute` with `{"token":"..."}` — consumes the approval, publishes immutable native authorizations, and submits exactly one Lidarr command.
+- `POST /api/v1/approvals/{approvalId}/reconcile` with `{"token":"..."}` — returns HTTP 202 while the command runs and reports success only after complete per-file reconciliation.
 
-Discovery calls only Lidarr `GET` endpoints and refuses versions other than `3.1.2.4913`. It paginates the queue, requests manual-import metadata by download ID, strictly verifies positive IDs and source/artist/album/release/track relationships through Lidarr, excludes tracks that already have files, rejects duplicate source identities, and maps every source file one-to-one. Deterministic output passes through the same strict proposal validator used for untrusted model output. `proposed` means only that a verified metadata mapping was found; Lidarr rejection reasons remain in the response and no importability claim is made. Ambiguous or incomplete results are returned as `manualReview`; Phase 2 does not call an LLM or expose approval/import endpoints. Keep the service bound to localhost even though API routes require authentication, because discovery responses contain library metadata.
+The companion release archive includes `ai-importctl.py`, a dependency-free client for these routes. Set `AIIMPORT_URL` and `COMPANION_API_TOKEN`, then use `safety`, `list`, `approve <analysis-id>`, `execute <approval-id> --token-file <0600-file>`, `status <approval-id> --token-file <0600-file>`, and `reconcile --wait <approval-id> --token-file <0600-file>`. Tokens may instead come from protected stdin or `AIIMPORT_APPROVAL_TOKEN`; they are never positional command arguments.
+
+Discovery refuses versions other than `3.1.2.4913`, verifies Lidarr ownership relationships, excludes tracks that already have files, rejects duplicate source identities, and maps each source one-to-one. An LLM proposal never authorizes a write. Keep the service on a private network even though routes require authentication, because responses contain library metadata and approval tokens authorize imports.
+
+### First import and rollback
+
+1. Back up Lidarr's `/config` directory and database.
+2. Choose one expendable album whose source torrent can be rechecked.
+3. Confirm `/api/v1/import-safety` returns `executionEnabled: true` with no blockers.
+4. Approve, execute, and call reconcile until it returns `succeeded`. Do not repeat `execute` after a timeout or connection loss.
+5. Confirm the source and library files have the same device and inode (`stat -c '%d %i %n' ...`).
+6. Recheck the torrent before importing more music. This validation is strongly recommended even when you choose to trial the RC directly.
+
+If reconciliation is indeterminate, stop. Do not issue a second approval for the same files. Restore the Lidarr backup only after preserving `/data/approvals.json` and `/data/authorizations` for diagnosis; deleting those records does not safely undo a command that may already have run.
 
 Lidarr's script-import setting is global. If the packaged script is configured, every Lidarr transfer requested as `HardLinkOrCopy` becomes strict hardlink-or-fail, including imports not initiated by this project. This deliberately prevents silent copying but can make unrelated cross-device imports fail.
 
@@ -95,13 +133,13 @@ cd Lidarr.Plugin.AIImport
 ./scripts/build.sh
 ```
 
-The script needs Docker, runs both test projects, produces `artifacts/Lidarr.Plugin.AIImport-v0.1.0.net8.0.zip`, and publishes the companion under `artifacts/companion/`. It pins Lidarr source to the target image's plugin commit.
+The script needs Docker, runs both test projects, produces the plugin and companion v1.0 RC archives under `artifacts/`, and publishes the unpacked companion under `artifacts/companion/`. It pins Lidarr source to the target image's plugin commit.
 
 ## Roadmap
 
 - **Phase 1:** feasibility, loadable plugin, settings, Test Connection — implemented.
 - **Phase 2:** read-only failed-import discovery, deterministic candidate generation, Lidarr/MusicBrainz-ID verification, dry-run proposals — merged.
-- **Phase 3:** hardlink-only transfer primitive and read-only safety assessment — implemented locally; approval/import execution remains gated pending fail-closed reconciliation.
+- **Phase 3:** descriptor-bound hardlink execution, durable approvals, helper attestation, and fail-closed per-file reconciliation — implemented in the v1.0 release candidate.
 - **Phase 4:** batch UX and opt-in automation after sufficient validation evidence.
 
 ## License

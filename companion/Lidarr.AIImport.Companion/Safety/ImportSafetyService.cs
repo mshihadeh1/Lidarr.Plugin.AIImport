@@ -37,6 +37,8 @@ public sealed class ImportSafetyService
             blockers.Add($"Import safety is supported only for Lidarr {CompatibleLidarrVersion}.");
         if (string.IsNullOrWhiteSpace(_options.HardlinkScriptPath))
             blockers.Add("HARDLINK_SCRIPT_PATH must identify the verified hardlink-only import script inside Lidarr.");
+        if (!_options.AuthorizationDeploymentConfirmed)
+            blockers.Add("AUTHORIZATION_DEPLOYMENT_CONFIRMED must be true only after Lidarr and the companion share the authorization directory at the same path and UID.");
         if (!configuration.CopyUsingHardlinks)
             blockers.Add("Lidarr Copy Using Hardlinks must be enabled.");
         if (!configuration.UseScriptImport)
@@ -57,13 +59,13 @@ public sealed class ImportSafetyService
             blockers.Add("Lidarr embedded cover art must be disabled.");
         return new ImportSafetyAssessment(
             ConfigurationPrerequisitesSatisfied: blockers.Count == 0,
-            ExecutionEnabled: false,
+            ExecutionEnabled: blockers.Count == 0,
             Blockers: blockers,
             Limitations:
             [
-                "The companion verifies Lidarr configuration but does not attest the installed script bytes.",
-                "Lidarr command completion does not prove that an individual file import succeeded.",
-                "The shell transfer primitive cannot eliminate pathname TOCTOU races; execution remains disabled pending a descriptor-safe transfer implementation."
+                "Execution is supported only on the pinned Lidarr build and exact configured hardlink helper.",
+                "Success requires per-file native, inode, history, track-file, and track-binding reconciliation.",
+                "A real torrent-client recheck has not been performed in this environment; back up Lidarr and test one expendable album first."
             ]);
     }
 }

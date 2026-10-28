@@ -60,3 +60,16 @@ Verified on 2026-10-26 against the same disposable Lidarr container:
 - Independent security review found that the shell implementation cannot eliminate pathname TOCTOU races or make failure cleanup descriptor-safe. The safety response reports this limitation and `executionEnabled` remains `false`; an approval/import route must not be added until a descriptor-safe native helper or pinned Lidarr implementation replaces the shell primitive.
 
 All Phase 3 operations above used only disposable fixture data. Approval/import routes remain absent.
+
+## v1.0 RC2 local verification
+
+Verified locally on 2026-10-28:
+
+- Native helper integration suite passed with lowercase real-host Lidarr environment keys, missing-context fail-closed behavior, destination-root confinement, authorization expiry/replay checks, source and destination races, interruption recovery, collision refusal, and cross-device failure.
+- Managed suites passed 129/129 tests: 29 plugin and 100 companion tests.
+- Release build completed and produced the plugin and companion `1.0.0-rc2` archives.
+- Managed/native authorization records use the same `AIAUTH02` format, including the approved destination root.
+- Reconciliation requests album-scoped enriched track-file resources, then filters to the exact history-derived file IDs; the pinned host's ID-only mapper omits required artist/indexer evidence.
+- Manual-import submission leaves `disableReleaseSwitching=false`, avoiding an unrelated persistent album-policy mutation.
+
+This record does **not** yet claim a complete RC2 approval/execute/reconcile run against the disposable Lidarr container or a torrent-client recheck. Those remain release gates before importing a real library.

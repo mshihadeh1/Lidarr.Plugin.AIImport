@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using Lidarr.AIImport.Companion.Configuration;
+using Lidarr.AIImport.Companion.Execution;
 using Lidarr.AIImport.Companion.Lidarr;
 
 namespace Lidarr.AIImport.Companion.Tests;
@@ -8,6 +9,38 @@ namespace Lidarr.AIImport.Companion.Tests;
 [TestFixture]
 public sealed class LidarrClientTests
 {
+    [Test]
+    public async Task Reads_bounded_reconciliation_evidence_from_exact_resources()
+    {
+        var handler = new ReconciliationHandler();
+        ILidarrReconciliationClient client = new LidarrClient(new HttpClient(handler), new CompanionOptions
+        {
+            LidarrBaseUrl = "http://lidarr:8686",
+            LidarrApiKey = "test-key"
+        });
+
+        var command = await client.GetCommandAsync(42, CancellationToken.None);
+        var history = await client.GetImportHistoryAsync("download id", 10, CancellationToken.None);
+        var files = await client.GetTrackFilesAsync(10, [501], CancellationToken.None);
+        var tracks = await client.GetTracksAsync([1001], CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(command, Is.EqualTo(new LidarrCommandState(42, "ManualImport", "completed", "successful")));
+            Assert.That(history.Single().DroppedPath, Is.EqualTo("/downloads/track.flac"));
+            Assert.That(history.Single().TrackFileId, Is.EqualTo(501));
+            Assert.That(history.Single().IndexerFlags, Is.EqualTo(9));
+            Assert.That(files.Single().Path, Is.EqualTo("/music/track.flac"));
+            Assert.That(tracks.Single().TrackFileId, Is.EqualTo(501));
+            Assert.That(handler.Requests.Any(uri => uri.AbsolutePath == "/api/v1/history" &&
+                uri.Query.Contains("downloadId=download%20id", StringComparison.Ordinal) &&
+                uri.Query.Contains("eventType=3", StringComparison.Ordinal)), Is.True);
+            Assert.That(handler.Requests.Any(uri => uri.AbsolutePath == "/api/v1/trackfile" &&
+                uri.Query.Contains("albumId=10", StringComparison.Ordinal) &&
+                !uri.Query.Contains("trackFileIds", StringComparison.Ordinal)), Is.True);
+        });
+    }
+
     [Test]
     public async Task Discovery_uses_only_get_requests_and_api_key_header()
     {
@@ -35,6 +68,9 @@ public sealed class LidarrClientTests
             Assert.That(files, Has.Count.EqualTo(1));
             Assert.That(files.Single().ArtistId, Is.EqualTo(5));
             Assert.That(files.Single().AlbumId, Is.EqualTo(10));
+            Assert.That(files.Single().ArtistMusicBrainzId, Is.EqualTo("11111111-1111-1111-1111-111111111111"));
+            Assert.That(files.Single().AlbumMusicBrainzId, Is.EqualTo("22222222-2222-2222-2222-222222222222"));
+            Assert.That(files.Single().ReleaseMusicBrainzId, Is.EqualTo("33333333-3333-3333-3333-333333333333"));
             Assert.That(files.Single().Id, Has.Length.EqualTo(20));
             Assert.That(files.Single().Id, Is.EqualTo(sameFiles.Single().Id));
             Assert.That(files.Single().Id, Is.Not.EqualTo(otherDownloadFiles.Single().Id));
@@ -135,6 +171,29 @@ public sealed class LidarrClientTests
             client.GetImportSafetyConfigurationAsync(CancellationToken.None));
     }
 
+    private sealed class ReconciliationHandler : HttpMessageHandler
+    {
+        public List<Uri> Requests { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request.RequestUri!);
+            var path = request.RequestUri!.AbsolutePath;
+            var json = path switch
+            {
+                "/api/v1/command/42" => """{"id":42,"name":"ManualImport","status":"completed","result":"successful"}""",
+                "/api/v1/history" => """{"page":1,"pageSize":100,"totalRecords":1,"records":[{"id":601,"artistId":5,"albumId":10,"trackId":1001,"downloadId":"download id","date":"2026-10-27T08:00:01Z","eventType":"trackFileImported","quality":{"quality":{"id":1}},"data":{"fileId":"501","droppedPath":"/downloads/track.flac","importedPath":"/music/track.flac","size":"123","indexerFlags":"Freeleech, Internal"}}]}""",
+                "/api/v1/trackfile" => """[{"id":501,"artistId":5,"albumId":10,"path":"/music/track.flac","size":123,"quality":{"quality":{"id":1}},"indexerFlags":0}]""",
+                "/api/v1/track" => """[{"id":1001,"artistId":5,"albumId":10,"trackFileId":501,"hasFile":true}]""",
+                _ => throw new AssertionException($"Unexpected request: {request.RequestUri}")
+            };
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
     private sealed class FixtureHandler : HttpMessageHandler
     {
         public List<HttpRequestMessage> Requests { get; } = new();
@@ -147,7 +206,7 @@ public sealed class LidarrClientTests
             {
                 "/api/v1/system/status" => """{"version":"3.1.2.4913","packageVersion":"3.1.2.4913","branch":"plugins"}""",
                 "/api/v1/queue" => """{"page":1,"pageSize":100,"totalRecords":1,"records":[{"id":1,"albumId":10,"title":"Album","status":"completed","trackedDownloadState":"importPending","statusMessages":[],"downloadId":"download id","outputPath":"/downloads/album"}]}""",
-                "/api/v1/manualimport" => """[{"id":1,"path":"/downloads/album/01.flac","name":"01.flac","size":100,"artist":{"id":5,"artistName":"Artist"},"album":{"id":10,"title":"Album"},"albumReleaseId":101,"tracks":[],"rejections":[],"audioTags":{"title":"Song","artistTitle":"Artist","albumTitle":"Album","discNumber":1,"trackNumbers":[1],"duration":"00:03:00"}}]""",
+                "/api/v1/manualimport" => """[{"id":1,"path":"/downloads/album/01.flac","name":"01.flac","size":100,"artist":{"id":5,"artistName":"Artist"},"album":{"id":10,"title":"Album"},"albumReleaseId":101,"tracks":[],"rejections":[],"audioTags":{"title":"Song","artistTitle":"Artist","albumTitle":"Album","artistMBId":"11111111-1111-1111-1111-111111111111","albumMBId":"22222222-2222-2222-2222-222222222222","releaseMBId":"33333333-3333-3333-3333-333333333333","recordingMBId":"44444444-4444-4444-4444-444444444444","discNumber":1,"trackNumbers":[1],"duration":"00:03:00"}}]""",
                 "/api/v1/album/10" => """{"id":10,"title":"Album","artist":{"id":5,"artistName":"Artist"},"releases":[{"id":101,"albumId":10,"foreignReleaseId":"release-101","title":"Album","trackCount":1,"disambiguation":"","monitored":true}]}""",
                 "/api/v1/track" => """[{"id":1001,"albumId":10,"foreignTrackId":"track-1","foreignRecordingId":"recording-1","trackNumber":"1","title":"Song","duration":180000,"mediumNumber":1,"hasFile":false}]""",
                 "/api/v1/config/mediamanagement" => """{"copyUsingHardlinks":true,"useScriptImport":true,"scriptImportPath":"/config/lidarr-ai-import/lidarr-hardlink-import","setPermissionsLinux":false,"fileDate":"none","importExtraFiles":false}""",
