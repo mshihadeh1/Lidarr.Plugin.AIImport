@@ -68,8 +68,9 @@ jobs:
         run: dotnet list tests/Lidarr.Plugin.AIImport.Tests/Lidarr.Plugin.AIImport.Tests.csproj package --vulnerable --include-transitive
 
       - name: Test
+        # Native-helper attestation intentionally requires root-owned fixture files.
         run: >-
-          dotnet test tests/Lidarr.Plugin.AIImport.Tests/Lidarr.Plugin.AIImport.Tests.csproj
+          sudo --preserve-env=DOTNET_ROOT,PLUGIN_VERSION,PLUGIN_ASSEMBLY_VERSION,NATIVE_HELPER_SHA256 dotnet test tests/Lidarr.Plugin.AIImport.Tests/Lidarr.Plugin.AIImport.Tests.csproj
           --no-restore --configuration Release --nologo --verbosity minimal
           -p:NuGetAudit=false -p:EnableAnalyzers=false
           -p:Version="$PLUGIN_VERSION" -p:PackageVersion="$PLUGIN_VERSION" -p:AssemblyVersion="$PLUGIN_ASSEMBLY_VERSION"
