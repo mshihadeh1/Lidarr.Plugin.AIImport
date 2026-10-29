@@ -84,6 +84,15 @@ jobs:
       - name: Test native hardlink helper
         run: bash tests/native-hardlink-helper-tests.sh
 
+      - name: Rebuild and attest packaged native helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-native-helper.sh artifacts/lidarr-hardlink-import
+          helper_sha="$(sha256sum artifacts/lidarr-hardlink-import | cut -d' ' -f1)"
+          test "${#helper_sha}" -eq 64
+          echo "NATIVE_HELPER_SHA256=$helper_sha" >> "$GITHUB_ENV"
+
       - name: Build plugin
         run: >-
           dotnet build src/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.csproj
