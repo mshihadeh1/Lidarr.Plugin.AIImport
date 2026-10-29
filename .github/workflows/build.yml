@@ -77,6 +77,10 @@ jobs:
           -p:FileVersion="$PLUGIN_ASSEMBLY_VERSION" -p:InformationalVersion="$PLUGIN_VERSION"
           -p:NativeHelperSha256="$NATIVE_HELPER_SHA256"
 
+      - name: Restore workspace ownership after root-only attestation tests
+        shell: bash
+        run: sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+
       - name: Test native hardlink helper
         run: bash tests/native-hardlink-helper-tests.sh
 
