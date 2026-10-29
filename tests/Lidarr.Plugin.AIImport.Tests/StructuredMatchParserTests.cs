@@ -29,7 +29,7 @@ public sealed class StructuredMatchParserTests
 
         var proposal = StructuredMatchParser.ParseAndValidate(json);
 
-        Assert.That(proposal.Status, Is.EqualTo(MatchStatus.ManualReview));
+        Assert.That(proposal.Status, Is.EqualTo(ProposalStatus.ManualReview));
     }
 
     [TestCase("{\"schemaVersion\":1,\"status\":\"proposed\",\"artistId\":1,\"albumId\":2,\"releaseId\":3,\"confidence\":1.1,\"explanation\":\"bad\",\"tracks\":[]}")]

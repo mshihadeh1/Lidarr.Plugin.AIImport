@@ -197,6 +197,71 @@ printf 'race sentinel\n' > "$TMP/library/destination-race.flac"
 if wait "$pid"; then fail "destination race succeeded"; fi
 [ "$(cat "$TMP/library/destination-race.flac")" = "race sentinel" ] || fail "destination race changed sentinel"
 
+printf 'parent rename source\n' > "$TMP/source/parent-rename.flac"
+mkdir "$TMP/library/rename-parent"
+hook="$TMP/parent-rename"
+authorize "$TMP/source/parent-rename.flac" "$TMP/library/rename-parent/track.flac" "$TMP/library/rename-parent"
+AIIMPORT_TEST_AFTER_LINK=$hook AIIMPORT_AUTHORIZATION_DIR="$AUTH" lidarr_transfermode=HardLinkOrCopy \
+    lidarr_artist_id=5 lidarr_album_id=10 lidarr_trackfile_trackids=1001 \
+    lidarr_sourcepath="$TMP/source/parent-rename.flac" lidarr_destinationpath="$TMP/library/rename-parent/track.flac" \
+    "$HELPER" "$TMP/source/parent-rename.flac" "$TMP/library/rename-parent/track.flac" & pid=$!
+wait_marker "$hook"
+mv "$TMP/library/rename-parent" "$TMP/library/renamed-parent"
+mkdir "$TMP/library/rename-parent"
+: > "$hook.go"
+if wait "$pid"; then fail "destination-parent rename after link succeeded"; fi
+[ ! -e "$TMP/library/rename-parent/track.flac" ] || fail "parent rename wrote at the replacement path"
+[ ! -e "$TMP/library/renamed-parent/track.flac" ] || fail "parent rename retained a hardlink outside the authorized path"
+
+printf 'rollback replacement source\n' > "$TMP/source/rollback-replacement.flac"
+mkdir "$TMP/library/rollback-parent"
+hook="$TMP/rollback-replacement"
+after_hook="$TMP/rollback-replacement-after-link"
+authorize "$TMP/source/rollback-replacement.flac" "$TMP/library/rollback-parent/track.flac" "$TMP/library/rollback-parent"
+AIIMPORT_TEST_AFTER_LINK=$after_hook AIIMPORT_TEST_BEFORE_ROLLBACK=$hook AIIMPORT_AUTHORIZATION_DIR="$AUTH" lidarr_transfermode=HardLinkOrCopy \
+    lidarr_artist_id=5 lidarr_album_id=10 lidarr_trackfile_trackids=1001 \
+    lidarr_sourcepath="$TMP/source/rollback-replacement.flac" lidarr_destinationpath="$TMP/library/rollback-parent/track.flac" \
+    "$HELPER" "$TMP/source/rollback-replacement.flac" "$TMP/library/rollback-parent/track.flac" & pid=$!
+wait_marker "$after_hook"
+mv "$TMP/library/rollback-parent" "$TMP/library/rollback-parent-moved"
+mkdir "$TMP/library/rollback-parent"
+: > "$after_hook.go"
+wait_marker "$hook"
+rm "$TMP/library/rollback-parent-moved/track.flac"
+printf 'rollback replacement sentinel\n' > "$TMP/library/rollback-parent-moved/track.flac"
+: > "$hook.go"
+if wait "$pid"; then fail "rollback replacement race succeeded"; fi
+[ "$(cat "$TMP/library/rollback-parent-moved/track.flac")" = "rollback replacement sentinel" ] || fail "rollback deleted an unrelated replacement"
+
+printf 'destination replacement source\n' > "$TMP/source/destination-replacement.flac"
+hook="$TMP/destination-replacement"
+authorize "$TMP/source/destination-replacement.flac" "$TMP/library/destination-replacement.flac"
+AIIMPORT_TEST_AFTER_LINK=$hook AIIMPORT_AUTHORIZATION_DIR="$AUTH" lidarr_transfermode=HardLinkOrCopy \
+    lidarr_artist_id=5 lidarr_album_id=10 lidarr_trackfile_trackids=1001 \
+    lidarr_sourcepath="$TMP/source/destination-replacement.flac" lidarr_destinationpath="$TMP/library/destination-replacement.flac" \
+    "$HELPER" "$TMP/source/destination-replacement.flac" "$TMP/library/destination-replacement.flac" & pid=$!
+wait_marker "$hook"
+rm "$TMP/library/destination-replacement.flac"
+printf 'replacement sentinel\n' > "$TMP/library/destination-replacement.flac"
+: > "$hook.go"
+if wait "$pid"; then fail "replaced destination published a successful result"; fi
+[ "$(cat "$TMP/library/destination-replacement.flac")" = "replacement sentinel" ] || fail "destination replacement changed sentinel"
+
+printf 'existing result source\n' > "$TMP/source/existing-result.flac"
+ln "$TMP/source/existing-result.flac" "$TMP/library/existing-result.flac"
+hook="$TMP/existing-result"
+authorize "$TMP/source/existing-result.flac" "$TMP/library/existing-result.flac"
+AIIMPORT_TEST_BEFORE_EXISTING_RESULT=$hook AIIMPORT_AUTHORIZATION_DIR="$AUTH" lidarr_transfermode=HardLinkOrCopy \
+    lidarr_artist_id=5 lidarr_album_id=10 lidarr_trackfile_trackids=1001 \
+    lidarr_sourcepath="$TMP/source/existing-result.flac" lidarr_destinationpath="$TMP/library/existing-result.flac" \
+    "$HELPER" "$TMP/source/existing-result.flac" "$TMP/library/existing-result.flac" & pid=$!
+wait_marker "$hook"
+rm "$TMP/library/existing-result.flac"
+printf 'existing replacement sentinel\n' > "$TMP/library/existing-result.flac"
+: > "$hook.go"
+if wait "$pid"; then fail "replaced existing destination published a successful result"; fi
+[ "$(cat "$TMP/library/existing-result.flac")" = "existing replacement sentinel" ] || fail "existing destination replacement changed sentinel"
+
 printf 'interrupted source\n' > "$TMP/source/interrupted.flac"
 hook="$TMP/interrupted"
 authorize "$TMP/source/interrupted.flac" "$TMP/library/interrupted.flac"

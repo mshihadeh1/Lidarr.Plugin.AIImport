@@ -1,147 +1,183 @@
-# Lidarr AI Import Plugin
+# Lidarr AI Import v1.0
 
-A safety-first Lidarr plugin foundation for OpenAI-compatible, metadata-constrained import matching.
+Standalone, approval-gated AI-assisted import matching for **Lidarr 3.1.2.4913**.
 
-> **Current development status:** v1.0 release candidate. Authenticated approval, strict hardlink execution, durable command receipts, and per-file reconciliation are implemented. This build has not yet completed a real torrent-client recheck; back up Lidarr and test one expendable album before broader use.
+The plugin runs inside Lidarr. It does not use a companion service, a companion URL, or separate Lidarr credentials. It discovers failed imports, constrains matching to current Lidarr metadata, requires explicit approval, invokes Lidarr's native manual-import pipeline, and permits only verified hardlinks.
 
-## Why execution is fail-closed
+## Safety model
 
-Lidarr's ordinary `Copy` path uses `HardLinkOrCopy`: when hardlink creation fails it can fall back to a copy. This project replaces that boundary with a native descriptor-bound helper that either creates the authorized hardlink or fails. Approvals are short-lived and single-use. A submitted import is not successful until native results, source and destination inode identity, Lidarr history, track-file state, and track bindings all reconcile. Unknown outcomes are never retried automatically.
+- Exact Lidarr compatibility: `3.1.2.4913` only.
+- The LLM may rank only candidates supplied by Lidarr; returned IDs and relationships are revalidated.
+- Discovery is read-only.
+- Approval is expiring, single-use, and bound to the current source/Lidarr state.
+- Execution revalidates the plan immediately before submitting it to Lidarr.
+- The packaged native helper is SHA-256 verified, copied into a sealed anonymous `memfd`, and executed through `/proc/self/fd/198`.
+- Native authorization binds the source device/inode/metadata, destination root, Lidarr IDs, and expiry.
+- Copy fallback is forbidden. Cross-device imports fail rather than copying.
+- Success requires native-transfer, Lidarr command, history, track-file, and track-binding reconciliation.
+- Workflow state is stored beneath `<Lidarr app data>/ai-import`.
 
-See [docs/FEASIBILITY.md](docs/FEASIBILITY.md) for source-backed findings, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the staged design, and [docs/VERIFICATION.md](docs/VERIFICATION.md) for the disposable-container test record.
+## Requirements
 
-## Compatibility
+- Linux x86-64.
+- Lidarr `3.1.2.4913` from the plugin-capable branch/image.
+- Download and library paths visible to Lidarr on the **same filesystem**.
+- An OpenAI-compatible chat-completions endpoint.
+- A saved `AI Import` Connect provider in Lidarr.
 
-- Tested image: `ghcr.io/linuxserver-labs/prarr:lidarr-plugins`
-- Tested image package: Lidarr `3.1.2.4913`, plugin branch commit `e42a7ca4fd633e021d69da7daa0368b870b0282e`
-- Target framework: .NET 8 (`net8.0`)
-- Designed to coexist with plugins such as Tubifarry by using Lidarr's isolated plugin loader and existing Connect-provider settings UI; direct coexistence testing is still pending.
-- Other Lidarr releases are not yet claimed compatible. Plugin internals are not a stable SDK.
+Before execution, these Lidarr Media Management settings must be exact:
 
-## Install
+- **Copy Using Hardlinks:** enabled
+- **Use Script Import:** enabled
+- **Script Import Path:** `/proc/self/fd/198`
+- **Set Permissions:** disabled
+- **File Date:** `None`
+- **Import Extra Files:** disabled
+- **Write Audio Tags:** `No`
+- **Scrub Audio Tags:** disabled
+- **Embed Cover Art:** disabled
+
+The plugin checks these settings again before authorization and command submission. A mismatch fails closed.
+
+## Installation
 
 ### From a GitHub release
 
-1. Use the plugin-enabled image shown above.
-2. In Lidarr, open **System → Plugins**.
-3. Install `https://github.com/mshihadeh1/Lidarr.Plugin.AIImport`.
-4. Restart Lidarr when prompted.
-5. Open **Settings → Connect**, add **AI Import**, configure the endpoint, and click **Test**.
+Install `Lidarr.Plugin.AIImport-v1.0.0.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
-The Lidarr installer selects a release asset whose name contains `net8.0.zip`; release notes must include `Minimum Lidarr Version: 3.1.2.4913` for installer compatibility and separately state that `3.1.2.4913` is the exact tested and supported version. Newer releases require separate compatibility verification.
+### Manual installation
 
-### Manual Docker installation
+1. Extract these four files into:
 
-Extract the release files under the persistent `/config/plugins/<owner>/<repository>/` hierarchy:
+   ```text
+   <Lidarr app data>/plugins/mshihadeh1/Lidarr.Plugin.AIImport/
+   ```
 
-```text
-/config/plugins/mshihadeh1/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.dll
-/config/plugins/mshihadeh1/Lidarr.Plugin.AIImport/lidarr-hardlink-import
-```
+   - `Lidarr.Plugin.AIImport.dll`
+   - `lidarr-hardlink-import`
+   - `LICENSE`
+   - `SOURCE.txt`
 
-Restart the container. Do not install into `/app/lidarr`; that path is replaced with image updates.
+2. Set the helper executable:
 
-## LLM settings
+   ```bash
+   chmod 0555 <plugin-directory>/lidarr-hardlink-import
+   ```
 
-- API base URL (`http://localhost:8080/v1`, or another reachable URL)
-- Optional API key
-- Model identifier
+3. Restart Lidarr.
+4. Confirm **System → Plugins** reports `AI Import` version `1.0.0.0`.
+5. Configure the exact Media Management settings listed above and restart Lidarr once more.
+
+## Configure the LLM endpoint
+
+In **Settings → Connect**, add and save **AI Import**. Configure:
+
+- API base URL, such as `https://api.openai.com/v1`
+- API key
+- Model
 - Temperature
 - Request timeout
 - Maximum output tokens
 - Optional custom system prompt
 
-The client uses `POST {baseUrl}/chat/completions` and standard OpenAI chat-completion response fields. Base URLs containing credentials, queries, or fragments are rejected. Local providers require no cloud account. Docker note: `localhost` inside Lidarr means the Lidarr container; use a shared Docker network and service name for another container. HTTP is supported for local/self-hosted endpoints; use HTTPS for any endpoint crossing an untrusted network because bearer keys otherwise travel in plaintext.
+Use **Test** before saving. Endpoint credentials remain in Lidarr's provider settings and are not included in workflow state, prompts, action responses, or logs.
 
-Examples are in [examples/openai-compatible-settings.json](examples/openai-compatible-settings.json).
+## Using the plugin
 
-## Companion
+v1.0 exposes controls through Lidarr's authenticated notification-provider action API. It intentionally does not add a custom frontend bundle.
 
-Build the pinned container from the repository root:
-
-```bash
-docker build -f companion/Dockerfile -t lidarr-ai-import-companion:local .
-sudo install -d -m 0700 -o 1000 -g 1000 /host/ai-import-data
-docker run --rm --name lidarr-ai-import --network media --user 1000:1000 \
-  -p 127.0.0.1:8080:8080 \
-  -e LIDARR_BASE_URL=http://lidarr:8686 \
-  -e LIDARR_API_KEY=replace-with-lidarr-api-key \
-  -e COMPANION_API_TOKEN=replace-with-a-random-companion-token \
-  -e HARDLINK_SCRIPT_PATH=/config/plugins/mshihadeh1/Lidarr.Plugin.AIImport/lidarr-hardlink-import \
-  -e AIIMPORT_AUTHORIZATION_DIR=/data/authorizations \
-  -e AUTHORIZATION_DEPLOYMENT_CONFIRMED=true \
-  -v /host/ai-import-data:/data \
-  -v /host/downloads:/downloads \
-  -v /host/music:/music \
-  lidarr-ai-import-companion:local
-```
-
-Replace `1000:1000` with the UID/GID used by Lidarr. The companion and Lidarr-launched helper must run as the same UID because authorization directories and records use owner-only permissions. Place the container on the same Docker network as Lidarr and use Lidarr's service name rather than `localhost`. Mount `/host/ai-import-data` into Lidarr at `/data` too, set `AIIMPORT_AUTHORIZATION_DIR=/data/authorizations` in **both** processes, and mount download and library paths at the exact same paths in both containers. Set `AUTHORIZATION_DEPLOYMENT_CONFIRMED=true` only after those checks; otherwise the safety endpoint keeps execution disabled. Every `/api` request requires `X-Companion-Api-Key`.
-
-The corresponding Lidarr service settings are:
-
-```yaml
-services:
-  lidarr:
-    user: "1000:1000"
-    environment:
-      AIIMPORT_AUTHORIZATION_DIR: /data/authorizations
-    volumes:
-      - /host/ai-import-data:/data
-      - /host/downloads:/downloads
-      - /host/music:/music
-```
-
-- `GET /health` — reports approval-required mode and the compatibility pin.
-- `GET /api/v1/failed-imports` — scans `importBlocked` and `importFailed` queue items and returns dry-run results. Send the configured token in `X-Companion-Api-Key`; missing or incorrect tokens receive HTTP 401.
-- `GET /api/v1/import-safety` — reports whether every hardlink safety prerequisite is satisfied.
-- `POST /api/v1/analyses/{analysisId}/approve-import` — revalidates the complete plan and returns a short-lived approval ID and bearer token.
-- `POST /api/v1/approvals/{approvalId}/status` with `{"token":"..."}` — retrieves durable execution state, including terminal success after a lost reconciliation response.
-- `POST /api/v1/approvals/{approvalId}/execute` with `{"token":"..."}` — consumes the approval, publishes immutable native authorizations, and submits exactly one Lidarr command.
-- `POST /api/v1/approvals/{approvalId}/reconcile` with `{"token":"..."}` — returns HTTP 202 while the command runs and reports success only after complete per-file reconciliation.
-
-The companion release archive includes `ai-importctl.py`, a dependency-free client for these routes. Set `AIIMPORT_URL` and `COMPANION_API_TOKEN`, then use `safety`, `list`, `approve <analysis-id>`, `execute <approval-id> --token-file <0600-file>`, `status <approval-id> --token-file <0600-file>`, and `reconcile --wait <approval-id> --token-file <0600-file>`. Tokens may instead come from protected stdin or `AIIMPORT_APPROVAL_TOKEN`; they are never positional command arguments.
-
-Discovery refuses versions other than `3.1.2.4913`, verifies Lidarr ownership relationships, excludes tracks that already have files, rejects duplicate source identities, and maps each source one-to-one. An LLM proposal never authorizes a write. Keep the service on a private network even though routes require authentication, because responses contain library metadata and approval tokens authorize imports.
-
-### First import and rollback
-
-1. Back up Lidarr's `/config` directory and database.
-2. Choose one expendable album whose source torrent can be rechecked.
-3. Confirm `/api/v1/import-safety` returns `executionEnabled: true` with no blockers.
-4. Approve, execute, and call reconcile until it returns `succeeded`. Do not repeat `execute` after a timeout or connection loss.
-5. Confirm the source and library files have the same device and inode (`stat -c '%d %i %n' ...`).
-6. Recheck the torrent before importing more music. This validation is strongly recommended even when you choose to trial the RC directly.
-
-If reconciliation is indeterminate, stop. Do not issue a second approval for the same files. Restore the Lidarr backup only after preserving `/data/approvals.json` and `/data/authorizations` for diagnosis; deleting those records does not safely undo a command that may already have run.
-
-Lidarr's script-import setting is global. If the packaged script is configured, every Lidarr transfer requested as `HardLinkOrCopy` becomes strict hardlink-or-fail, including imports not initiated by this project. This deliberately prevents silent copying but can make unrelated cross-device imports fail.
-
-## Security and privacy
-
-- API keys use Lidarr's secret field treatment and are never included in prompts.
-- The current plugin sends only a fixed connection-test prompt.
-- Match proposals use opaque source-file IDs rather than full paths.
-- LLM IDs are proposals only; future matching must verify every artist, album, release, and track ID against Lidarr/MusicBrainz candidates.
-- Unknown or duplicate JSON fields, malformed responses, invented statuses, missing IDs, duplicate file IDs, and invalid confidence values are rejected. The runtime parser is authoritative; the published JSON Schema cannot detect duplicate JSON object keys or uniqueness by only `sourceFileId`.
-
-## Build and test
+First fetch the saved provider definition:
 
 ```bash
-git clone --recurse-submodules https://github.com/mshihadeh1/Lidarr.Plugin.AIImport.git
-cd Lidarr.Plugin.AIImport
-./scripts/build.sh
+LIDARR_URL='http://localhost:8686'
+LIDARR_API_KEY='your-lidarr-api-key'
+
+curl -fsS -H "X-Api-Key: $LIDARR_API_KEY" \
+  "$LIDARR_URL/api/v1/notification" \
+  | jq 'map(select(.implementation == "AiImportConnector"))[0]' \
+  > /tmp/ai-import-provider.json
 ```
 
-The script needs Docker, runs both test projects, produces the plugin and companion v1.0 RC archives under `artifacts/`, and publishes the unpacked companion under `artifacts/companion/`. It pins Lidarr source to the target image's plugin commit.
+### 1. Discover
 
-## Roadmap
+```bash
+curl -fsS -X POST \
+  -H "X-Api-Key: $LIDARR_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data @/tmp/ai-import-provider.json \
+  "$LIDARR_URL/api/v1/notification/action/discover"
+```
 
-- **Phase 1:** feasibility, loadable plugin, settings, Test Connection — implemented.
-- **Phase 2:** read-only failed-import discovery, deterministic candidate generation, Lidarr/MusicBrainz-ID verification, dry-run proposals — merged.
-- **Phase 3:** descriptor-bound hardlink execution, durable approvals, helper attestation, and fail-closed per-file reconciliation — implemented in the v1.0 release candidate.
-- **Phase 4:** batch UX and opt-in automation after sufficient validation evidence.
+Discovery examines queue entries in `importBlocked` or `importFailed`. Review each returned proposal and retain its `analysisId`.
+
+### 2. Approve
+
+```bash
+ANALYSIS_ID='reviewed-analysis-id'
+curl -fsS -X POST \
+  -H "X-Api-Key: $LIDARR_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data @/tmp/ai-import-provider.json \
+  "$LIDARR_URL/api/v1/notification/action/approve?analysisId=$ANALYSIS_ID"
+```
+
+Approval does not move or link files. It returns an expiring `approvalId`.
+
+### 3. Execute
+
+```bash
+APPROVAL_ID='approved-id'
+curl -fsS -X POST \
+  -H "X-Api-Key: $LIDARR_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data @/tmp/ai-import-provider.json \
+  "$LIDARR_URL/api/v1/notification/action/execute?approvalId=$APPROVAL_ID"
+```
+
+Execution is single-use. Do not retry an uncertain response with a new approval; inspect status and reconcile first.
+
+### 4. Check status and reconcile
+
+```bash
+curl -fsS -X POST \
+  -H "X-Api-Key: $LIDARR_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data @/tmp/ai-import-provider.json \
+  "$LIDARR_URL/api/v1/notification/action/status?approvalId=$APPROVAL_ID"
+
+curl -fsS -X POST \
+  -H "X-Api-Key: $LIDARR_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data @/tmp/ai-import-provider.json \
+  "$LIDARR_URL/api/v1/notification/action/reconcile?approvalId=$APPROVAL_ID"
+```
+
+A successful terminal state requires all native and Lidarr evidence to agree. `Indeterminate` means stop and inspect; it is not permission to retry automatically.
+
+## Operational guidance
+
+1. Try one non-critical failed album first.
+2. Verify the source remains available to the torrent client.
+3. Confirm source and destination share device and inode:
+
+   ```bash
+   stat -c '%d:%i %n' /path/to/source.flac /path/to/library/file.flac
+   ```
+
+4. Recheck the torrent before increasing usage.
+5. Keep backups. The plugin is deliberately conservative but does not replace normal backup practices.
+
+## Building
+
+```bash
+git submodule update --init --recursive
+VERSION=1.0.0 ./scripts/build.sh
+```
+
+A dirty local verification build requires `ALLOW_DIRTY_BUILD=1` and intentionally does not claim a corresponding-source commit URL. Release packages must be produced from a clean tagged tree.
+
+The release ZIP contains only the plugin DLL, native helper, GPL-3.0 license, and source notice.
 
 ## License
 
-GPL-3.0-only, matching Lidarr's license because this plugin links against Lidarr internals.
+GPL-3.0-only. See `LICENSE` and `SECURITY.md`.

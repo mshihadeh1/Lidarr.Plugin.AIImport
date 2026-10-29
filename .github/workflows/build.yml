@@ -47,12 +47,21 @@ jobs:
           echo "PLUGIN_VERSION=$version" >> "$GITHUB_ENV"
           echo "PLUGIN_ASSEMBLY_VERSION=$assembly_version" >> "$GITHUB_ENV"
 
+      - name: Build and identify static native hardlink helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          bash scripts/build-native-helper.sh artifacts/lidarr-hardlink-import
+          echo "NATIVE_HELPER_SHA256=$(sha256sum artifacts/lidarr-hardlink-import | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
       - name: Restore pinned Lidarr dependencies
         run: >-
           dotnet restore Lidarr.Plugin.AIImport.sln --configfile NuGet.config
           -p:NuGetAudit=false -p:EnableAnalyzers=false
           -p:Version="$PLUGIN_VERSION" -p:PackageVersion="$PLUGIN_VERSION"
           -p:AssemblyVersion="$PLUGIN_ASSEMBLY_VERSION"
+          -p:NativeHelperSha256="$NATIVE_HELPER_SHA256"
 
       - name: Report inherited dependency advisories
         continue-on-error: true
@@ -65,33 +74,10 @@ jobs:
           -p:NuGetAudit=false -p:EnableAnalyzers=false
           -p:Version="$PLUGIN_VERSION" -p:PackageVersion="$PLUGIN_VERSION" -p:AssemblyVersion="$PLUGIN_ASSEMBLY_VERSION"
           -p:FileVersion="$PLUGIN_ASSEMBLY_VERSION" -p:InformationalVersion="$PLUGIN_VERSION"
-
-      - name: Test companion
-        run: >-
-          dotnet test tests/Lidarr.AIImport.Companion.Tests/Lidarr.AIImport.Companion.Tests.csproj
-          --no-restore --configuration Release --nologo --verbosity minimal
-          -p:NuGetAudit=false -p:EnableAnalyzers=false
+          -p:NativeHelperSha256="$NATIVE_HELPER_SHA256"
 
       - name: Test native hardlink helper
         run: bash tests/native-hardlink-helper-tests.sh
-
-      - name: Build static native hardlink helper
-        run: bash scripts/build-native-helper.sh artifacts/lidarr-hardlink-import
-
-      - name: Build companion container
-        run: >-
-          docker build -f companion/Dockerfile -t lidarr-ai-import-companion:ci
-          --build-arg COMPANION_VERSION="$PLUGIN_VERSION"
-          --build-arg COMPANION_ASSEMBLY_VERSION="$PLUGIN_ASSEMBLY_VERSION" .
-
-      - name: Verify one native helper binary recipe
-        shell: bash
-        run: |
-          set -euo pipefail
-          container="$(docker create lidarr-ai-import-companion:ci)"
-          trap 'docker rm -f "$container" >/dev/null' EXIT
-          docker cp "$container:/app/lidarr-hardlink-import" artifacts/container-lidarr-hardlink-import
-          test "$(sha256sum artifacts/lidarr-hardlink-import | cut -d' ' -f1)" = "$(sha256sum artifacts/container-lidarr-hardlink-import | cut -d' ' -f1)"
 
       - name: Build plugin
         run: >-
@@ -100,6 +86,7 @@ jobs:
           -p:NuGetAudit=false -p:EnableAnalyzers=false
           -p:Version="$PLUGIN_VERSION" -p:PackageVersion="$PLUGIN_VERSION" -p:AssemblyVersion="$PLUGIN_ASSEMBLY_VERSION"
           -p:FileVersion="$PLUGIN_ASSEMBLY_VERSION" -p:InformationalVersion="$PLUGIN_VERSION"
+          -p:NativeHelperSha256="$NATIVE_HELPER_SHA256"
 
       - name: Package
         shell: bash
@@ -109,14 +96,9 @@ jobs:
           cp src/Lidarr.Plugin.AIImport/bin/Release/net8.0/Lidarr.Plugin.AIImport.dll artifacts/
           chmod 0555 artifacts/lidarr-hardlink-import
           cp LICENSE artifacts/LICENSE
-          cp scripts/ai-importctl.py artifacts/ai-importctl.py
-          chmod 0555 artifacts/ai-importctl.py
-          dotnet publish companion/Lidarr.AIImport.Companion/Lidarr.AIImport.Companion.csproj --configuration Release --no-restore --nologo --output artifacts/companion -p:NuGetAudit=false -p:EnableAnalyzers=false -p:Version="$PLUGIN_VERSION" -p:PackageVersion="$PLUGIN_VERSION" -p:AssemblyVersion="$PLUGIN_ASSEMBLY_VERSION" -p:FileVersion="$PLUGIN_ASSEMBLY_VERSION" -p:InformationalVersion="$PLUGIN_VERSION"
           printf 'Corresponding source: https://github.com/%s/tree/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" > artifacts/SOURCE.txt
           (cd artifacts && zip -q "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip" Lidarr.Plugin.AIImport.dll lidarr-hardlink-import LICENSE SOURCE.txt)
           (cd artifacts && sha256sum "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip" > "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip.sha256")
-          (cd artifacts && zip -qr "Lidarr.AIImport.Companion-v${PLUGIN_VERSION}.linux-x64.zip" companion lidarr-hardlink-import ai-importctl.py LICENSE SOURCE.txt)
-          (cd artifacts && sha256sum "Lidarr.AIImport.Companion-v${PLUGIN_VERSION}.linux-x64.zip" > "Lidarr.AIImport.Companion-v${PLUGIN_VERSION}.linux-x64.zip.sha256")
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -142,12 +124,12 @@ jobs:
         with:
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            v1.0 release candidate: authenticated failed-import discovery, explicit single-use approvals, strict hardlink-only execution, and fail-closed per-file reconciliation.
+            Standalone Lidarr AI Import plugin: authenticated failed-import discovery, explicit single-use approvals, strict hardlink-only execution, and fail-closed per-file reconciliation. No companion service or separate Lidarr API credentials are required.
 
             Minimum Lidarr Version: 3.1.2.4913
             Exact tested and supported Lidarr Version: 3.1.2.4913; newer versions are not supported by this release.
 
-            Execution requires the companion archive, identical media paths in both containers, a shared owner-only authorization directory mounted at the same absolute path, matching Lidarr/companion UIDs, and AIIMPORT_AUTHORIZATION_DIR configured in the Lidarr process. Back up Lidarr and test one expendable album first. Never retry execute after an indeterminate response; use status and reconciliation.
+            Configure the plugin's OpenAI-compatible endpoint in Lidarr and set Lidarr's Script Import path exactly as documented. Back up Lidarr and test one expendable album first. Never retry execute after an indeterminate response; use status and reconciliation.
           files: |
             artifacts/*.zip
             artifacts/*.sha256

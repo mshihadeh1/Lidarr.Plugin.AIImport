@@ -6,7 +6,7 @@
 2. **The LLM output is untrusted.** Parse strict JSON, reject unknown fields, then verify every ID and relationship against current metadata.
 3. **Filesystem operations belong to Lidarr.** The project will not implement an independent mover/copier/tagger.
 4. **Imports are approval-gated.** Automatic import remains out of scope until manual mode has operational evidence.
-5. **Companion metadata is authenticated.** Every `/api` request requires the independently configured `X-Companion-Api-Key`; `/health` contains no library metadata and remains unauthenticated.
+5. **The plugin is standalone.** It uses direct in-process Lidarr services and the authenticated `AiImportConnector.RequestAction` provider route. It has no companion URL, self-HTTP, or separate Lidarr API credentials.
 
 ## Components
 
@@ -14,13 +14,17 @@
 - `Configuration/AiImportConnector`: existing Connect-provider UI and Test Connection integration.
 - `Llm/IOpenAiChatClient`: provider-neutral OpenAI chat-completions abstraction.
 - `Matching/StructuredMatchParser`: current strict runtime enforcement layer, including fenced-JSON fallback for models without native JSON-schema support. The published schema documents representable constraints but cannot detect duplicate object keys or uniqueness by only `sourceFileId`.
-- Companion `Discovery`: paginated `importBlocked`/`importFailed` queue items and public manual-import API candidates.
+- Plugin `Discovery`: `importBlocked`/`importFailed` tracked downloads and direct `IManualImportService` candidates.
 - Companion `Metadata`: release and track ownership retrieved from Lidarr; embedded MusicBrainz track IDs are accepted only when they match a returned Lidarr track.
 - Companion `Matching`: maximum-cardinality, maximum-score one-to-one deterministic assignment; existing library tracks are excluded. Ambiguous results remain manual review in Phase 2.
 - Companion `ImportSafety`: authenticated assessment of the exact script path and every Lidarr setting that could copy, retag, chmod, timestamp, embed artwork, import extras, or persist release-selection changes. Execution remains blocked until every prerequisite passes and deployment sharing is explicitly confirmed.
 - Packaged `lidarr-hardlink-import`: native Linux helper for immutable authorization publication, descriptor-bound hardlink creation, destination-root confinement, durable claims/results, and post-link identity verification. It never defers a missing `HardLinkOrCopy` context to Lidarr's copy-capable transfer path.
-- Companion approval/execution/reconciliation: durable single-use approvals, native authorization bindings, one Lidarr command receipt, and per-file fail-closed reconciliation.
-- Future companion UI: batch selection/review and opt-in automation only after manual-mode evidence.
+- Standalone approval/execution/reconciliation: durable single-use approvals below Lidarr app data, native authorization bindings, one Lidarr command receipt, and exact per-file fail-closed reconciliation.
+- Control actions are `discover`, `approve`, `execute`, `reconcile`, and `status`; imports never run directly from discovery.
+
+## Native helper trust gate
+
+The helper attestor requires a root-owned, single-link, non-writable regular file and executes the already-open descriptor. Ordinary same-UID plugin extraction followed by mode `0555` does **not** satisfy this trust boundary, so execution fails closed. A sealed `memfd_create` installation with an embedded build hash and exact `/proc/self/fd/<fd>` Script Import path is the preferred standalone deployment design and remains a release blocker until container-verified.
 
 ## Matching pipeline
 

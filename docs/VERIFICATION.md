@@ -61,15 +61,18 @@ Verified on 2026-10-26 against the same disposable Lidarr container:
 
 All Phase 3 operations above used only disposable fixture data. Approval/import routes remain absent.
 
-## v1.0 RC2 local verification
+## v1.0 standalone release verification
 
-Verified locally on 2026-10-28:
+Verified on 2026-10-29 UTC against a fresh disposable `ghcr.io/linuxserver-labs/prarr:lidarr-plugins` container running Lidarr `3.1.2.4913`:
 
-- Native helper integration suite passed with lowercase real-host Lidarr environment keys, missing-context fail-closed behavior, destination-root confinement, authorization expiry/replay checks, source and destination races, interruption recovery, collision refusal, and cross-device failure.
-- Managed suites passed 129/129 tests: 29 plugin and 100 companion tests.
-- Release build completed and produced the plugin and companion `1.0.0-rc2` archives.
-- Managed/native authorization records use the same `AIAUTH02` format, including the approved destination root.
-- Reconciliation requests album-scoped enriched track-file resources, then filters to the exact history-derived file IDs; the pinned host's ID-only mapper omits required artist/indexer evidence.
-- Manual-import submission leaves `disableReleaseSwitching=false`, avoiding an unrelated persistent album-policy mutation.
+- `ALLOW_DIRTY_BUILD=1 VERSION=1.0.0 ./scripts/build.sh` passed the native descriptor-bound hardlink suite, 100 retained companion regression tests, and 86 standalone plugin tests. The final managed build completed with zero warnings and zero errors.
+- The four-entry verification ZIP contained only `Lidarr.Plugin.AIImport.dll`, `lidarr-hardlink-import`, `LICENSE`, and `SOURCE.txt`. The dirty verification package explicitly made no exact corresponding-source claim.
+- The deployed plugin and helper SHA-256 values matched the freshly built artifacts, and Lidarr loaded assembly version `1.0.0.0`.
+- A real blackhole queue item containing ten generated FLAC files reached Lidarr's `importBlocked` state. The authenticated provider action route completed `discover → approve → execute → reconcile → status` through the production plugin graph.
+- Discovery returned one validated ten-file/ten-track proposal. Approval passed Lidarr's authoritative manual-import revalidation. Execution submitted `ManualImport` command `8404`, which completed successfully with the message `Manually imported 10 files`.
+- Reconciliation returned `status: succeeded`, `verifiedFiles: 10`, and verified every approved file against native transfer results, filesystem state, Lidarr history, track-file records, and track bindings. Final workflow status was `succeeded`.
+- All ten source files remained present. Before/after source device, inode, size, and mode matched; each destination had the same device and inode as its source, link count `2`, equal size, and equal SHA-256.
+- The disposable download client was configured not to remove completed source data. No real library or existing Lidarr instance was mounted or modified.
+- Integration defects found during the run were corrected before this verification: action-only provider resolution, unfiltered manual-import discovery, authoritative approval mapping, lowercase Lidarr history-data keys, and isolation of vanished stale queue entries.
 
-This record does **not** yet claim a complete RC2 approval/execute/reconcile run against the disposable Lidarr container or a torrent-client recheck. Those remain release gates before importing a real library.
+The final release artifact must still be rebuilt from the exact clean tagged source so `SOURCE.txt` names that commit. Published release metadata and checksums must be read back before distribution.

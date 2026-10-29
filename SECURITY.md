@@ -13,7 +13,7 @@ Please report vulnerabilities privately through GitHub Security Advisories rathe
 
 ## Dependency boundary
 
-The release ZIP contains only this plugin DLL, its GPL license, and a corresponding-source notice. Lidarr host dependencies are compile-time project references and are not redistributed. CI reports inherited vulnerable packages from the pinned Lidarr source; remediation requires a separately verified Lidarr compatibility pin rather than silently replacing host assemblies.
+The release ZIP contains only this plugin DLL, the statically linked strict-hardlink helper, its GPL license, and a corresponding-source notice. Lidarr host dependencies are compile-time project references and are not redistributed. CI reports inherited vulnerable packages from the pinned Lidarr source; remediation requires a separately verified Lidarr compatibility pin rather than silently replacing host assemblies.
 
 ## Import safety
 

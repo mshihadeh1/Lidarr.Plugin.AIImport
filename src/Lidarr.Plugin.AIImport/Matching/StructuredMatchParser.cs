@@ -33,8 +33,8 @@ public static class StructuredMatchParser
 
             var status = RequireString(root, "status") switch
             {
-                "proposed" => MatchStatus.Proposed,
-                "manualReview" => MatchStatus.ManualReview,
+                "proposed" => ProposalStatus.Proposed,
+                "manualReview" => ProposalStatus.ManualReview,
                 _ => throw new MatchSchemaException("status must be proposed or manualReview.")
             };
 
@@ -54,7 +54,7 @@ public static class StructuredMatchParser
                 throw new MatchSchemaException("tracks must be an array.");
             }
 
-            var tracks = new List<TrackMatchProposal>();
+            var tracks = new List<TrackProposal>();
             var sourceIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var track in tracksElement.EnumerateArray())
             {
@@ -67,15 +67,15 @@ public static class StructuredMatchParser
                     throw new MatchSchemaException("Each sourceFileId must be non-empty and unique.");
                 }
 
-                tracks.Add(new TrackMatchProposal(sourceFileId, RequirePositiveInt(track, "trackId"), RequireConfidence(track, "confidence")));
+                tracks.Add(new TrackProposal(sourceFileId, RequirePositiveInt(track, "trackId"), RequireConfidence(track, "confidence")));
             }
 
-            if (status == MatchStatus.Proposed && (artistId is null || albumId is null || releaseId is null || tracks.Count == 0))
+            if (status == ProposalStatus.Proposed && (artistId is null || albumId is null || releaseId is null || tracks.Count == 0))
             {
                 throw new MatchSchemaException("A proposed match requires verified candidate IDs and at least one track.");
             }
 
-            if (status == MatchStatus.ManualReview && tracks.Count > 0)
+            if (status == ProposalStatus.ManualReview && tracks.Count > 0)
             {
                 throw new MatchSchemaException("A manualReview response cannot contain track mappings.");
             }

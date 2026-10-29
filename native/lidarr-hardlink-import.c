@@ -633,7 +633,7 @@ int main(int argc, char **argv)
         int claim_state = parse_claim(authfd, &candidate, destination_path, &destination_parent_status, &claim);
         if (claim_state == 1) close(claim);
         if (claim_state < 0) continue;
-        if (claim_state == 0 && (candidate.expires < (uint64_t)time(NULL) || !identity_matches(&candidate, &source_status, true))) continue;
+        if (claim_state == 0 && (candidate.expires <= (uint64_t)time(NULL) || !identity_matches(&candidate, &source_status, true))) continue;
         selected = candidate;
         matches++;
     }
@@ -663,11 +663,15 @@ int main(int argc, char **argv)
             !path_still_names_inode(root, destination_path, &source_status) ||
             !directory_path_still_names_inode(root, destination_parent, &destination_parent_status))
             fail(EXIT_DESTINATION, "destination exists with a different identity");
+        test_pause("AIIMPORT_TEST_BEFORE_EXISTING_RESULT");
+        if (!path_still_names_inode(root, destination_path, &source_status) ||
+            !directory_path_still_names_inode(root, destination_parent, &destination_parent_status))
+            fail(EXIT_DESTINATION, "destination was replaced before durable result publication");
         publish_result(authfd, &selected, &source_status, 2);
         dprintf(STDOUT_FILENO, "hardlink import: reconciled existing authorized hardlink\n");
         _exit(0);
     }
-    if (selected.expires < (uint64_t)time(NULL) || !identity_matches(&selected, &source_status, true))
+    if (selected.expires <= (uint64_t)time(NULL) || !identity_matches(&selected, &source_status, true))
         fail(EXIT_SOURCE, "source identity changed before authorized hardlink creation");
     test_pause("AIIMPORT_TEST_BEFORE_LINK");
     if (!path_still_names_inode(root, source_path, &source_status))
@@ -690,12 +694,27 @@ int main(int argc, char **argv)
     else created_link = true;
     if (fsync(destination_directory) != 0) fail(EXIT_DESTINATION, "cannot synchronize destination directory");
     test_pause("AIIMPORT_TEST_AFTER_LINK");
-    if (fstat(source, &source_status) != 0 || !identity_matches(&selected, &source_status, false) ||
-        !path_still_names_inode(root, source_path, &source_status) ||
-        !directory_path_still_names_inode(root, destination_parent, &destination_parent_status))
+    existing = openat(destination_directory, destination_name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    bool destination_matches = existing >= 0 && same_regular_inode(existing, &source_status);
+    bool post_link_valid = fstat(source, &source_status) == 0 &&
+        identity_matches(&selected, &source_status, false) &&
+        path_still_names_inode(root, source_path, &source_status) &&
+        directory_path_still_names_inode(root, destination_parent, &destination_parent_status) &&
+        destination_matches && path_still_names_inode(root, destination_path, &source_status);
+    if (!post_link_valid)
     {
+        if (created_link && destination_matches)
+        {
+            test_pause("AIIMPORT_TEST_BEFORE_ROLLBACK");
+            int rollback_candidate = openat(destination_directory, destination_name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+            if (rollback_candidate < 0 || !same_regular_inode(rollback_candidate, &source_status))
+                fail(EXIT_DESTINATION, "created hardlink was replaced before rollback; replacement was retained");
+            close(rollback_candidate);
+            if (unlinkat(destination_directory, destination_name, 0) != 0 || fsync(destination_directory) != 0)
+                fail(EXIT_DESTINATION, "authorized identity changed and the created hardlink could not be rolled back");
+        }
         fail(EXIT_DESTINATION, created_link
-            ? "authorized identity changed after hardlink creation; destination is retained for reconciliation"
+            ? "authorized identity changed after hardlink creation; created hardlink was rolled back"
             : "authorized identity changed while reconciling an existing hardlink");
     }
     publish_result(authfd, &selected, &source_status, 1);

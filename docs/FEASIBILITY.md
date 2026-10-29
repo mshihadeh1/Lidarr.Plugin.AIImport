@@ -53,7 +53,7 @@ Source: [`Startup.cs`](https://github.com/Lidarr/Lidarr/blob/e42a7ca4fd633e021d6
 Smallest supported UX:
 
 - Plugin configuration and Test button under Lidarr **Settings → Connect**.
-- A narrowly scoped companion web UI/service for selection, proposal review, and approval, communicating only with Lidarr's public REST API.
+- Authenticated `AiImportConnector.RequestAction` calls for selection, proposal review, approval, execution, status, and reconciliation, using only direct in-process Lidarr services.
 - If a future plugin SDK adds frontend slots, move that UX into Lidarr without changing the matching core.
 
 ## Hardlink feasibility and controlled proof
