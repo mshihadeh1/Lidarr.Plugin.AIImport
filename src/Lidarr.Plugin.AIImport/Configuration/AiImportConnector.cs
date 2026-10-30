@@ -62,6 +62,11 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
 
     public override object RequestAction(string action, IDictionary<string, string> query)
     {
+        if (action == "startOAuth")
+            return new { oauthUrl = WorkspaceUrl(query) };
+        if (action == "getOAuthToken")
+            return new Dictionary<string, string>();
+
         var allowed = action is "discover" or "approve" or "execute" or "reconcile" or "status";
         if (!allowed)
         {
@@ -82,11 +87,26 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
         return action switch
         {
             "approve" => _standaloneWorkflow.Approve(RequiredQuery(query, "analysisId")),
-            "execute" => _standaloneWorkflow.Execute(RequiredQuery(query, "approvalId")),
+            "execute" => _standaloneWorkflow.Execute(
+                RequiredQuery(query, "approvalId"), RequiredQuery(query, "executeConfirmation")),
             "reconcile" => _standaloneWorkflow.Reconcile(RequiredQuery(query, "approvalId")),
             "status" => _standaloneWorkflow.Status(RequiredQuery(query, "approvalId")),
             _ => throw new ArgumentException("Unknown AI Import action.", nameof(action))
         };
+    }
+
+    private string WorkspaceUrl(IDictionary<string, string> query)
+    {
+        if (Definition.Id <= 0)
+            throw new InvalidOperationException("Save the AI Import provider before opening its workspace.");
+        var callbackUrl = RequiredQuery(query, "callbackUrl");
+        if (!Uri.TryCreate(callbackUrl, UriKind.Absolute, out var callback) ||
+            callback.Scheme is not ("http" or "https") ||
+            !callback.AbsolutePath.EndsWith("/oauth.html", StringComparison.Ordinal))
+            throw new ArgumentException("The callbackUrl must be Lidarr's OAuth callback path.", nameof(query));
+
+        return callback.AbsolutePath[..^"oauth.html".Length] +
+               $"plugins/mshihadeh1/ai-import-workspace.html?providerId={Definition.Id}";
     }
 
     private static string RequiredQuery(IDictionary<string, string> query, string name) =>

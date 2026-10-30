@@ -3,8 +3,8 @@
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>Lidarr.Plugin.AIImport</AssemblyName>
     <RootNamespace>Lidarr.Plugin.AIImport</RootNamespace>
-    <Version Condition="'$(Version)' == ''">1.0.0</Version>
-    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">1.0.0.0</AssemblyVersion>
+    <Version Condition="'$(Version)' == ''">1.0.1</Version>
+    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">1.0.1.0</AssemblyVersion>
     <FileVersion Condition="'$(FileVersion)' == ''">$(AssemblyVersion)</FileVersion>
     <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)</InformationalVersion>
     <Nullable>enable</Nullable>
@@ -23,5 +23,12 @@
       <ExcludeAssets>runtime</ExcludeAssets>
       <AdditionalProperties>EnableAnalyzers=false;AssemblyVersion=3.1.2.4913</AdditionalProperties>
     </ProjectReference>
+    <ProjectReference Include="../../vendor/Lidarr/src/Lidarr.Http/Lidarr.Http.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+      <AdditionalProperties>EnableAnalyzers=false;AssemblyVersion=3.1.2.4913</AdditionalProperties>
+    </ProjectReference>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <EmbeddedResource Include="Ui/ai-import.html" LogicalName="Lidarr.Plugin.AIImport.Ui.ai-import.html" />
   </ItemGroup>
 </Project>

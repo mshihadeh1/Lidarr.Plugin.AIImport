@@ -35,6 +35,42 @@ public sealed class AiImportConnectorTests
     }
 
     [Test]
+    public void RequestAction_opens_the_same_origin_workspace_without_running_a_workflow()
+    {
+        var resolver = new StubSettingsResolver(Settings());
+        var workflow = new StubWorkflow(Result());
+        var connector = Connector(workflow, resolver);
+
+        var response = connector.RequestAction("startOAuth", new Dictionary<string, string>
+        {
+            ["callbackUrl"] = "https://lidarr.example/lidarr/oauth.html"
+        });
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(response));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(json.RootElement.GetProperty("oauthUrl").GetString(),
+                Is.EqualTo("/lidarr/plugins/mshihadeh1/ai-import-workspace.html?providerId=27"));
+            Assert.That(resolver.CallCount, Is.Zero);
+            Assert.That(workflow.CallCount, Is.Zero);
+        });
+
+        var completion = connector.RequestAction("getOAuthToken", new Dictionary<string, string>());
+        Assert.That(JsonSerializer.Serialize(completion), Is.EqualTo("{}"));
+    }
+
+    [Test]
+    public void RequestAction_rejects_an_untrusted_workspace_callback_path()
+    {
+        var connector = Connector(new StubWorkflow(Result()), new StubSettingsResolver(Settings()));
+
+        Assert.Throws<ArgumentException>(() => connector.RequestAction("startOAuth", new Dictionary<string, string>
+        {
+            ["callbackUrl"] = "https://lidarr.example/not-oauth.html"
+        }));
+    }
+
+    [Test]
     public void RequestAction_rejects_unknown_or_wrong_case_actions_without_calling_dependencies()
     {
         var resolver = new StubSettingsResolver(Settings());
@@ -61,7 +97,9 @@ public sealed class AiImportConnectorTests
         };
 
         connector.RequestAction("approve", new Dictionary<string, string> { ["analysisId"] = "analysis-1" });
-        connector.RequestAction("execute", Credentials());
+        var execute = Credentials();
+        execute["executeConfirmation"] = "IMPORT";
+        connector.RequestAction("execute", execute);
         connector.RequestAction("reconcile", Credentials());
         connector.RequestAction("status", Credentials());
 
@@ -74,6 +112,8 @@ public sealed class AiImportConnectorTests
         });
         Assert.Throws<ArgumentException>(() =>
             connector.RequestAction("execute", new Dictionary<string, string>()));
+        Assert.Throws<ArgumentException>(() =>
+            connector.RequestAction("execute", Credentials()));
     }
 
     [Test]
@@ -177,7 +217,8 @@ public sealed class AiImportConnectorTests
             new AiImportAnalysisDto(
                 "analysis-1", "download-1", "Artist - Album", proposal,
                 [new SourceFileDto("source-1", "01 - Song.flac", "Artist", "Album", "Song", 1, [1], 180000)],
-                [new ReleaseCandidateDto(10, 101, 5, "Artist", "Album", "release-id")],
+                [new ReleaseCandidateDto(10, 101, 5, "Artist", "Album", "release-id",
+                    [new ReleaseTrackDto(1001, "Song", 1, "1", 180000, false)])],
                 false)
         ]);
     }
@@ -227,8 +268,9 @@ public sealed class AiImportConnectorTests
             Calls.Add("approve"); AnalysisId = analysisId;
             return new ApprovalCreatedDto("approval-1", DateTimeOffset.UtcNow.AddMinutes(15));
         }
-        public ImportExecutionStarted Execute(string approvalId)
+        public ImportExecutionStarted Execute(string approvalId, string confirmation)
         {
+            Assert.That(confirmation, Is.EqualTo("IMPORT"));
             Record("execute", approvalId);
             return new ImportExecutionStarted(42, "queued", ["auth"]);
         }

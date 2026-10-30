@@ -49,6 +49,7 @@ public sealed record ApprovedTransferAuthorization(
 
 public sealed class TransferAuthorizationStore : ITransferAuthorizationStore
 {
+
     private static readonly byte[] Magic = "AIAUTH02"u8.ToArray();
     private const uint Version = 2;
     private const int MaximumRecordBytes = 64 * 1024;
@@ -81,15 +82,34 @@ public sealed class TransferAuthorizationStore : ITransferAuthorizationStore
         _nativeHelperPath = nativeHelperPath is null ? null : Path.GetFullPath(nativeHelperPath);
         _timeProvider = timeProvider ?? TimeProvider.System;
         _attestor = attestor;
-        var existed = Directory.Exists(_directory);
-        if (!existed)
-            Directory.CreateDirectory(_directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        if (new DirectoryInfo(_directory).LinkTarget is not null)
-            throw new IOException("The transfer authorization directory cannot be a symbolic link.");
         var requiredMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
-        if (File.GetUnixFileMode(_directory) != requiredMode)
-            throw new IOException("The transfer authorization directory must have mode 0700.");
+        if (!Directory.Exists(_directory))
+            Directory.CreateDirectory(_directory, requiredMode);
+        SecureDirectoryMode(_directory);
+        if (new DirectoryInfo(_directory).LinkTarget is not null || File.GetUnixFileMode(_directory) != requiredMode)
+            throw new IOException("The transfer authorization directory could not be secured with mode 0700.");
     }
+
+    private static void SecureDirectoryMode(string directory)
+    {
+        var descriptor = open(directory, O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
+        if (descriptor < 0)
+            throw new IOException("The transfer authorization directory cannot be opened safely.",
+                new System.ComponentModel.Win32Exception(Marshal.GetLastPInvokeError()));
+        try
+        {
+            if (fchmod(descriptor, 0x1c0) != 0)
+                throw new IOException("The transfer authorization directory could not be secured with mode 0700.",
+                    new System.ComponentModel.Win32Exception(Marshal.GetLastPInvokeError()));
+        }
+        finally
+        {
+            _ = close(descriptor);
+        }
+    }
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int fchmod(int descriptor, uint mode);
 
     public async Task<IReadOnlyList<PublishedTransferAuthorization>> PublishAsync(
         ApprovedImportPlan plan,
@@ -363,6 +383,7 @@ public sealed class TransferAuthorizationStore : ITransferAuthorizationStore
     private const int O_RDONLY = 0;
     private const int O_DIRECTORY = 0x10000;
     private const int O_CLOEXEC = 0x80000;
+    private const int O_NOFOLLOW = 0x20000;
     [DllImport("libc", SetLastError = true)] private static extern int open(string pathname, int flags);
     [DllImport("libc", SetLastError = true)] private static extern int fsync(int fd);
     [DllImport("libc", SetLastError = true)] private static extern int close(int fd);

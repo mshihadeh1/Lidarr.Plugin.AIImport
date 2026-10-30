@@ -72,6 +72,8 @@ public sealed class StandaloneDiscoveryWorkflowTests
         Assert.Multiple(() =>
         {
             Assert.That(dto.Files.Single().Name, Is.EqualTo("01 - Song.flac"));
+            Assert.That(dto.Candidates.Single().Tracks.Single(), Is.EqualTo(
+                new ReleaseTrackDto(1001, "Song", 1, "1", 180000, false)));
             Assert.That(dto.GetType().GetProperties().Select(x => x.Name), Does.Not.Contain("ApiKey"));
             Assert.That(dto.Files.Single().GetType().GetProperties().Select(x => x.Name), Does.Not.Contain("SourcePath"));
         });

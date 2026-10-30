@@ -1,4 +1,4 @@
-# Lidarr AI Import v1.0
+# Lidarr AI Import v1.0.1
 
 Standalone, approval-gated AI-assisted import matching for **Lidarr 3.1.2.4913**.
 
@@ -44,7 +44,7 @@ The plugin checks these settings again before authorization and command submissi
 
 ### From a GitHub release
 
-Install `Lidarr.Plugin.AIImport-v1.0.0.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
+Install `Lidarr.Plugin.AIImport-v1.0.1.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
 ### Manual installation
 
@@ -66,7 +66,7 @@ Install `Lidarr.Plugin.AIImport-v1.0.0.net8.0.zip` through Lidarr's plugin suppo
    ```
 
 3. Restart Lidarr.
-4. Confirm **System → Plugins** reports `AI Import` version `1.0.0.0`.
+4. Confirm **System → Plugins** reports `AI Import` version `1.0.1.0`.
 5. Configure the exact Media Management settings listed above and restart Lidarr once more.
 
 ## Configure the LLM endpoint
@@ -80,80 +80,23 @@ In **Settings → Connect**, add and save **AI Import**. Configure:
 - Request timeout
 - Maximum output tokens
 - Optional custom system prompt
+- **Disable Model Thinking** for compatible Qwen/llama.cpp endpoints
 
 Use **Test** before saving. Endpoint credentials remain in Lidarr's provider settings and are not included in workflow state, prompts, action responses, or logs.
 
-## Using the plugin
+## Using the plugin in Lidarr
 
-v1.0 exposes controls through Lidarr's authenticated notification-provider action API. It intentionally does not add a custom frontend bundle.
+1. Open **Settings → Connect → AI Import**.
+2. Press **Open AI Import Workspace**. Lidarr opens an authenticated, same-origin workspace; no shell or separate Lidarr API credentials are needed.
+3. Press **Discover failed imports**. Discovery is read-only and examines queue entries in `importBlocked` or `importFailed`.
+4. Review each source-to-track mapping. `manualReview` results are read-only and cannot be approved.
+5. For a `proposed` result, check the review acknowledgement and press **Approve reviewed mapping**. Approval does not link files and expires after 15 minutes.
+6. Review the approved plan again, type `IMPORT`, and press **Execute hardlink import**. This is a distinct, single-use action.
+7. Use **Status** and **Reconcile** to verify the result. Success is not established by command completion alone.
 
-First fetch the saved provider definition:
+The workspace is served by the plugin through Lidarr's authenticated UI resource pipeline. Lidarr `3.1.2.4913` has no public frontend-plugin API, so this integration is intentionally pinned to that exact version.
 
-```bash
-LIDARR_URL='http://localhost:8686'
-LIDARR_API_KEY='your-lidarr-api-key'
-
-curl -fsS -H "X-Api-Key: $LIDARR_API_KEY" \
-  "$LIDARR_URL/api/v1/notification" \
-  | jq 'map(select(.implementation == "AiImportConnector"))[0]' \
-  > /tmp/ai-import-provider.json
-```
-
-### 1. Discover
-
-```bash
-curl -fsS -X POST \
-  -H "X-Api-Key: $LIDARR_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data @/tmp/ai-import-provider.json \
-  "$LIDARR_URL/api/v1/notification/action/discover"
-```
-
-Discovery examines queue entries in `importBlocked` or `importFailed`. Review each returned proposal and retain its `analysisId`.
-
-### 2. Approve
-
-```bash
-ANALYSIS_ID='reviewed-analysis-id'
-curl -fsS -X POST \
-  -H "X-Api-Key: $LIDARR_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data @/tmp/ai-import-provider.json \
-  "$LIDARR_URL/api/v1/notification/action/approve?analysisId=$ANALYSIS_ID"
-```
-
-Approval does not move or link files. It returns an expiring `approvalId`.
-
-### 3. Execute
-
-```bash
-APPROVAL_ID='approved-id'
-curl -fsS -X POST \
-  -H "X-Api-Key: $LIDARR_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data @/tmp/ai-import-provider.json \
-  "$LIDARR_URL/api/v1/notification/action/execute?approvalId=$APPROVAL_ID"
-```
-
-Execution is single-use. Do not retry an uncertain response with a new approval; inspect status and reconcile first.
-
-### 4. Check status and reconcile
-
-```bash
-curl -fsS -X POST \
-  -H "X-Api-Key: $LIDARR_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data @/tmp/ai-import-provider.json \
-  "$LIDARR_URL/api/v1/notification/action/status?approvalId=$APPROVAL_ID"
-
-curl -fsS -X POST \
-  -H "X-Api-Key: $LIDARR_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data @/tmp/ai-import-provider.json \
-  "$LIDARR_URL/api/v1/notification/action/reconcile?approvalId=$APPROVAL_ID"
-```
-
-A successful terminal state requires all native and Lidarr evidence to agree. `Indeterminate` means stop and inspect; it is not permission to retry automatically.
+If an execute response is lost or reports `Indeterminate`, do not execute again. Use **Status** and **Reconcile**. `Indeterminate` is never permission to retry automatically.
 
 ## Operational guidance
 
@@ -172,7 +115,7 @@ A successful terminal state requires all native and Lidarr evidence to agree. `I
 
 ```bash
 git submodule update --init --recursive
-VERSION=1.0.0 ./scripts/build.sh
+VERSION=1.0.1 ./scripts/build.sh
 ```
 
 A dirty local verification build requires `ALLOW_DIRTY_BUILD=1` and intentionally does not claim a corresponding-source commit URL. Release packages must be produced from a clean tagged tree.

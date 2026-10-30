@@ -6,7 +6,7 @@ namespace Lidarr.Plugin.AIImport.Workflows;
 public interface IStandaloneAiImportWorkflow
 {
     ApprovalCreatedDto Approve(string analysisId);
-    ImportExecutionStarted Execute(string approvalId);
+    ImportExecutionStarted Execute(string approvalId, string confirmation);
     ImportReconciliationResult Reconcile(string approvalId);
     ApprovalStatusDto Status(string approvalId);
 }
@@ -50,9 +50,14 @@ public sealed class StandaloneAiImportWorkflow : IStandaloneAiImportWorkflow
         return new ApprovalCreatedDto(created.ApprovalId, created.ExpiresAt);
     }
 
-    public ImportExecutionStarted Execute(string approvalId) =>
-        _execution.ExecuteAsync(Required(approvalId, nameof(approvalId)), string.Empty, CancellationToken.None, trustedInProcess: true)
+    public ImportExecutionStarted Execute(string approvalId, string confirmation)
+    {
+        if (!string.Equals(confirmation, "IMPORT", StringComparison.Ordinal))
+            throw new ArgumentException("The exact execution confirmation is required.", nameof(confirmation));
+        return _execution.ExecuteAsync(Required(approvalId, nameof(approvalId)), string.Empty,
+                CancellationToken.None, trustedInProcess: true)
             .GetAwaiter().GetResult();
+    }
 
     public ImportReconciliationResult Reconcile(string approvalId) =>
         _reconciliation.ReconcileAsync(Required(approvalId, nameof(approvalId)), string.Empty, CancellationToken.None, trustedInProcess: true)

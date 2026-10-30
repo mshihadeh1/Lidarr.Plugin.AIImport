@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using Lidarr.Plugin.AIImport.Configuration;
 using Lidarr.Plugin.AIImport.Llm;
 
@@ -68,6 +69,73 @@ public sealed class OpenAiChatClientTests
 
         Assert.DoesNotThrowAsync(() => client.TestConnectionAsync(settings, CancellationToken.None));
         Assert.That(handler.Request!.RequestUri!.ToString(), Is.EqualTo("http://llm.local/v1/chat/completions"));
+    }
+
+    [Test]
+    public async Task Completion_requests_strict_structured_json_output()
+    {
+        var handler = new RecordingHandler("""{"choices":[{"message":{"content":"{}"}}]}""");
+        var client = new OpenAiChatClient(new HttpClient(handler));
+        var settings = ValidSettings();
+        settings.DisableThinking = true;
+
+        await client.CompleteJsonAsync(settings, "system", "user", CancellationToken.None);
+
+        using var request = JsonDocument.Parse(handler.Body);
+        var responseFormat = request.RootElement.GetProperty("response_format");
+        Assert.Multiple(() =>
+        {
+            Assert.That(responseFormat.GetProperty("type").GetString(), Is.EqualTo("json_schema"));
+            Assert.That(responseFormat.GetProperty("json_schema").GetProperty("strict").GetBoolean(), Is.True);
+            Assert.That(
+                responseFormat.GetProperty("json_schema").GetProperty("schema").GetProperty("additionalProperties").GetBoolean(),
+                Is.False);
+            Assert.That(
+                request.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean(),
+                Is.False);
+        });
+    }
+
+    [Test]
+    public async Task Completion_omits_endpoint_specific_thinking_control_by_default()
+    {
+        var handler = new RecordingHandler("""{"choices":[{"message":{"content":"{}"}}]}""");
+        var client = new OpenAiChatClient(new HttpClient(handler));
+
+        await client.CompleteJsonAsync(ValidSettings(), "system", "user", CancellationToken.None);
+
+        using var request = JsonDocument.Parse(handler.Body);
+        Assert.That(request.RootElement.TryGetProperty("chat_template_kwargs", out _), Is.False);
+    }
+
+    [Test]
+    public async Task TestConnection_honors_the_endpoint_thinking_control_without_requesting_json_output()
+    {
+        var handler = new RecordingHandler("""{"choices":[{"message":{"content":"AI_IMPORT_OK"}}]}""");
+        var client = new OpenAiChatClient(new HttpClient(handler));
+        var settings = ValidSettings();
+        settings.DisableThinking = true;
+
+        await client.TestConnectionAsync(settings, CancellationToken.None);
+
+        using var request = JsonDocument.Parse(handler.Body);
+        Assert.Multiple(() =>
+        {
+            Assert.That(request.RootElement.TryGetProperty("response_format", out _), Is.False);
+            Assert.That(request.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean(), Is.False);
+        });
+    }
+
+    [Test]
+    public async Task TestConnection_does_not_request_json_output()
+    {
+        var handler = new RecordingHandler("""{"choices":[{"message":{"content":"AI_IMPORT_OK"}}]}""");
+        var client = new OpenAiChatClient(new HttpClient(handler));
+
+        await client.TestConnectionAsync(ValidSettings(), CancellationToken.None);
+
+        using var request = JsonDocument.Parse(handler.Body);
+        Assert.That(request.RootElement.TryGetProperty("response_format", out _), Is.False);
     }
 
     [Test]

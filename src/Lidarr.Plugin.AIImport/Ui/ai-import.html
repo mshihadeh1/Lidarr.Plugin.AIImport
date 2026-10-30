@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AI Import Workspace</title>
+  <style>
+    :root{color-scheme:dark;--bg:#15171a;--panel:#202328;--panel2:#292d33;--text:#e5e7eb;--muted:#a7adb7;--line:#3a3f47;--blue:#5aa9e6;--green:#5ac18e;--amber:#e6b85a;--red:#ef6b73}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+    header{background:#0f1114;border-bottom:1px solid var(--line);padding:18px 24px;position:sticky;top:0;z-index:3} h1{font-size:22px;margin:0} header p{margin:4px 0 0;color:var(--muted)}
+    main{max-width:1200px;margin:0 auto;padding:24px}.toolbar,.summary,.notice{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;margin-bottom:16px}
+    .toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.grow{flex:1}.muted{color:var(--muted)}
+    button{border:0;border-radius:4px;padding:9px 14px;background:var(--blue);color:#07111b;font-weight:700;cursor:pointer}button.secondary{background:#59616d;color:white}button.danger{background:var(--red);color:#1c080a}button:disabled{opacity:.45;cursor:not-allowed}
+    .card{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:6px;margin:14px 0;padding:16px}.card.proposed{border-left-color:var(--green)}.card h2{font-size:17px;margin:0 0 6px;overflow-wrap:anywhere}
+    .badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:700;background:#4b515b}.badge.good{background:#235c43;color:#b9f6d7}.badge.warn{background:#624d21;color:#ffe4a5}
+    table{width:100%;border-collapse:collapse;margin:12px 0;background:var(--panel2)}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-size:12px;text-transform:uppercase}.confidence{white-space:nowrap}
+    .review{background:#17191d;border:1px solid var(--line);padding:12px;border-radius:4px;margin-top:12px}.review label{display:block;margin:8px 0}.review input[type=text]{width:220px;max-width:100%;background:#0f1114;color:var(--text);border:1px solid var(--line);border-radius:4px;padding:8px}
+    pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#101215;border:1px solid var(--line);padding:10px;border-radius:4px}.error{color:#ffadb2}.success{color:#9de9bf}.hidden{display:none}.candidate-list{margin:8px 0;padding-left:20px}.statusline{margin-top:10px;font-weight:600}
+    @media(max-width:700px){main{padding:12px}header{padding:14px}th:nth-child(3),td:nth-child(3){display:none}}
+  </style>
+</head>
+<body>
+<header><h1>AI Import Workspace</h1><p>Standalone, explicit-approval, hardlink-only imports inside Lidarr</p></header>
+<main>
+  <section class="notice"><strong>Safety:</strong> Discovery is read-only. Review every mapping before approval. Execution is single-use and never falls back to copying. If an execution response is uncertain, do not retry—use Status and Reconcile.</section>
+  <section class="toolbar">
+    <button id="discover">Discover failed imports</button>
+    <button id="back" class="secondary">Back to Lidarr</button>
+    <span id="connection" class="grow muted">Connecting to Lidarr…</span>
+  </section>
+  <section id="summary" class="summary hidden"></section>
+  <section id="results"></section>
+</main>
+<script>
+'use strict';
+(() => {
+  const pageName = '/plugins/mshihadeh1/ai-import-workspace.html';
+  const basePath = location.pathname.toLowerCase().endsWith(pageName) ? location.pathname.slice(0, -pageName.length) : '';
+  const connection = document.getElementById('connection');
+  const discoverButton = document.getElementById('discover');
+  const summary = document.getElementById('summary');
+  const results = document.getElementById('results');
+  let apiRoot;
+  let apiKey;
+  let provider;
+
+  document.getElementById('back').addEventListener('click', () => { location.href = basePath + '/'; });
+
+  function element(tag, text, className) {
+    const node = document.createElement(tag);
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    if (className) node.className = className;
+    return node;
+  }
+
+  async function api(path, options = {}) {
+    const headers = Object.assign({'X-Api-Key': apiKey}, options.headers || {});
+    const response = await fetch(apiRoot + path, Object.assign({}, options, {headers, credentials: 'same-origin'}));
+    const text = await response.text();
+    let data = null;
+    if (text) {
+      try { data = JSON.parse(text); } catch { data = text; }
+    }
+    if (!response.ok) {
+      const detail = typeof data === 'string' ? data : JSON.stringify(data);
+      throw new Error(`HTTP ${response.status}: ${detail}`);
+    }
+    return data;
+  }
+
+  async function action(name, query = {}) {
+    const search = new URLSearchParams(query).toString();
+    return api(`/notification/action/${encodeURIComponent(name)}${search ? '?' + search : ''}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(provider)
+    });
+  }
+
+  function safeActionResult(name, value) {
+    if (!value || typeof value !== 'object') return null;
+    if (name === 'execute') return {
+      commandId: value.commandId,
+      commandStatus: value.commandStatus,
+      authorizationCount: Array.isArray(value.authorizationIds) ? value.authorizationIds.length : 0
+    };
+    if (name === 'status') return {
+      approvalId: value.approvalId,
+      analysisId: value.analysisId,
+      state: value.state,
+      expiresAt: value.expiresAt,
+      commandId: value.commandId,
+      commandStatus: value.commandStatus,
+      outcome: value.outcome
+    };
+    if (name === 'reconcile') return {
+      status: value.status,
+      verifiedFileCount: value.verifiedFileCount,
+      message: value.message
+    };
+    return null;
+  }
+
+  function formatConfidence(value) {
+    return typeof value === 'number' ? `${Math.round(value * 100)}%` : '—';
+  }
+
+  function hasCompleteUniqueMapping(analysis) {
+    const files = analysis.files || [];
+    const mappings = (analysis.proposal && analysis.proposal.tracks) || [];
+    if (!files.length || mappings.length !== files.length) return false;
+    const sourceIds = files.map(x => x.id);
+    const mappedSources = mappings.map(x => x.sourceFileId);
+    const mappedTracks = mappings.map(x => x.trackId);
+    if (new Set(sourceIds).size !== sourceIds.length ||
+        new Set(mappedSources).size !== mappedSources.length ||
+        new Set(mappedTracks).size !== mappedTracks.length ||
+        sourceIds.some(id => !mappedSources.includes(id))) return false;
+    const selected = (analysis.candidates || []).find(x => x.releaseId === analysis.proposal.releaseId);
+    const verifiedTracks = new Set(((selected && selected.tracks) || []).filter(x => !x.hasFile).map(x => x.trackId));
+    return mappedTracks.every(id => verifiedTracks.has(id));
+  }
+
+  function renderMappings(analysis) {
+    const table = element('table');
+    const head = element('thead');
+    const hr = element('tr');
+    ['Source file', 'Lidarr target', 'Confidence'].forEach(x => hr.appendChild(element('th', x)));
+    head.appendChild(hr); table.appendChild(head);
+    const body = element('tbody');
+    const sources = new Map((analysis.files || []).map(x => [x.id, x]));
+    const selected = (analysis.candidates || []).find(x => x.releaseId === analysis.proposal.releaseId);
+    const tracks = new Map(((selected && selected.tracks) || []).map(x => [x.trackId, x]));
+    (analysis.proposal.tracks || []).forEach(mapping => {
+      const row = element('tr');
+      const source = sources.get(mapping.sourceFileId);
+      const target = tracks.get(mapping.trackId);
+      row.appendChild(element('td', source ? source.name : mapping.sourceFileId));
+      row.appendChild(element('td', target ? `Disc ${target.discNumber}, Track ${target.trackNumber}: ${target.title}` : `Track ID ${mapping.trackId}`));
+      row.appendChild(element('td', formatConfidence(mapping.confidence), 'confidence'));
+      body.appendChild(row);
+    });
+    table.appendChild(body);
+    return table;
+  }
+
+  function setCardStatus(container, message, kind = '') {
+    container.textContent = message;
+    container.className = `statusline ${kind}`;
+  }
+
+  function renderAnalysis(analysis) {
+    const proposed = analysis.proposal && analysis.proposal.status === 'proposed' && hasCompleteUniqueMapping(analysis);
+    const card = element('article', null, `card${proposed ? ' proposed' : ''}`);
+    card.appendChild(element('h2', analysis.title));
+    const badge = element('span', proposed ? 'Proposed' : 'Manual review', `badge ${proposed ? 'good' : 'warn'}`);
+    card.appendChild(badge);
+    card.appendChild(element('span', `  Confidence ${formatConfidence(analysis.proposal.confidence)}`, 'muted'));
+    card.appendChild(element('p', analysis.proposal.explanation));
+
+    const meta = element('p', `${(analysis.files || []).length} source file(s) · ${(analysis.candidates || []).length} verified release candidate(s) · ${analysis.usedLlm ? 'LLM ranking used' : 'deterministic only'}`, 'muted');
+    card.appendChild(meta);
+
+    if (!proposed) {
+      const list = element('ul', null, 'candidate-list');
+      (analysis.candidates || []).forEach(c => list.appendChild(element('li', `${c.artist} — ${c.title} (release ${c.releaseId})`)));
+      if (list.children.length) card.appendChild(list);
+      card.appendChild(element('p', 'This result cannot be approved. Resolve the explanation in Lidarr or the download and discover again.', 'muted'));
+      return card;
+    }
+
+    card.appendChild(renderMappings(analysis));
+    const review = element('div', null, 'review');
+    const reviewLabel = element('label');
+    const check = document.createElement('input'); check.type = 'checkbox';
+    reviewLabel.appendChild(check);
+    reviewLabel.appendChild(document.createTextNode(' I reviewed every source-to-track mapping above and want to create an expiring approval.'));
+    review.appendChild(reviewLabel);
+    const approve = element('button', 'Approve reviewed mapping'); approve.disabled = true;
+    const statusLine = element('div', '', 'statusline');
+    check.addEventListener('change', () => { approve.disabled = !check.checked; });
+    review.appendChild(approve); review.appendChild(statusLine);
+    card.appendChild(review);
+
+    approve.addEventListener('click', async () => {
+      approve.disabled = true; check.disabled = true;
+      setCardStatus(statusLine, 'Creating approval…');
+      try {
+        const approval = await action('approve', {analysisId: analysis.analysisId});
+        setCardStatus(statusLine, `Approved until ${approval.expiresAt}. Review once more before execution.`, 'success');
+        renderExecution(review, statusLine, approval.approvalId);
+      } catch (error) {
+        setCardStatus(statusLine, `Approval failed: ${error.message}`, 'error');
+        check.disabled = false; approve.disabled = !check.checked;
+      }
+    });
+    return card;
+  }
+
+  function renderExecution(review, statusLine, approvalId) {
+    const block = element('div', null, 'review');
+    block.appendChild(element('p', 'Execution revalidates the entire plan and creates hardlinks only. Type IMPORT to enable execution.'));
+    const confirmation = document.createElement('input'); confirmation.type = 'text'; confirmation.placeholder = 'Type IMPORT'; confirmation.autocomplete = 'off';
+    const execute = element('button', 'Execute hardlink import', 'danger'); execute.disabled = true;
+    const status = element('button', 'Status', 'secondary');
+    const reconcile = element('button', 'Reconcile', 'secondary');
+    const output = element('pre', 'Not executed.');
+    confirmation.addEventListener('input', () => { execute.disabled = confirmation.value !== 'IMPORT'; });
+    block.appendChild(confirmation); block.appendChild(document.createTextNode(' ')); block.appendChild(execute);
+    block.appendChild(document.createTextNode(' ')); block.appendChild(status); block.appendChild(document.createTextNode(' ')); block.appendChild(reconcile); block.appendChild(output);
+    review.appendChild(block);
+
+    async function show(name) {
+      try {
+        const value = await action(name, {approvalId});
+        output.textContent = JSON.stringify(safeActionResult(name, value), null, 2);
+        output.className = '';
+        return true;
+      } catch (error) {
+        output.textContent = `${name} failed: ${error.message}`;
+        output.className = 'error';
+        return false;
+      }
+    }
+    status.addEventListener('click', () => show('status'));
+    reconcile.addEventListener('click', () => show('reconcile'));
+    execute.addEventListener('click', async () => {
+      execute.disabled = true; confirmation.disabled = true;
+      setCardStatus(statusLine, 'Submitting execution request…');
+      try {
+        const value = await action('execute', {approvalId, executeConfirmation: 'IMPORT'});
+        output.textContent = JSON.stringify(safeActionResult('execute', value), null, 2);
+        output.className = '';
+        setCardStatus(statusLine, 'Execution submitted. Verify Status and Reconcile; do not retry execution.', 'success');
+      } catch (error) {
+        setCardStatus(statusLine, 'Execution response failed. Checking durable status; do not retry unless status proves no command was submitted.', 'error');
+        output.textContent = `execute failed: ${error.message}`; output.className = 'error';
+        await show('status');
+      }
+    });
+  }
+
+  async function discover() {
+    discoverButton.disabled = true;
+    summary.classList.remove('hidden'); summary.textContent = 'Discovering failed and blocked imports…';
+    results.replaceChildren();
+    try {
+      const response = await action('discover');
+      const analyses = response.analyses || response || [];
+      const proposed = analyses.filter(x => x.proposal && x.proposal.status === 'proposed').length;
+      summary.textContent = `${analyses.length} analysis result(s): ${proposed} proposed, ${analyses.length - proposed} require manual review.`;
+      analyses.forEach(x => results.appendChild(renderAnalysis(x)));
+      if (!analyses.length) results.appendChild(element('p', 'No Import Blocked or Import Failed queue items were found.', 'muted'));
+    } catch (error) {
+      summary.textContent = `Discovery failed: ${error.message}`; summary.className = 'summary error';
+    } finally { discoverButton.disabled = false; }
+  }
+
+  async function initialize() {
+    try {
+      const initResponse = await fetch(basePath + '/initialize.json', {credentials: 'same-origin'});
+      if (!initResponse.ok) throw new Error(`initialize.json returned HTTP ${initResponse.status}`);
+      const init = await initResponse.json();
+      apiRoot = init.apiRoot;
+      apiKey = init.apiKey;
+      const providerIdText = new URLSearchParams(location.search).get('providerId');
+      const providerId = Number(providerIdText);
+      if (!Number.isInteger(providerId) || providerId <= 0) throw new Error('The saved AI Import provider ID is missing.');
+      const notifications = await api('/notification');
+      provider = notifications.find(x => x.id === providerId && x.implementation === 'AiImportConnector');
+      if (!provider) throw new Error(`Saved AI Import provider ${providerId} was not found.`);
+      connection.textContent = `Connected to ${init.instanceName || 'Lidarr'} ${init.version || ''}`;
+      discoverButton.addEventListener('click', discover);
+      if (window.opener && typeof window.opener.onCompleteOauth === 'function') {
+        window.opener.onCompleteOauth('?aiImportOpened=true', () => {});
+      }
+    } catch (error) {
+      connection.textContent = `Workspace unavailable: ${error.message}`; connection.className = 'grow error'; discoverButton.disabled = true;
+    }
+  }
+
+  initialize();
+})();
+</script>
+</body>
+</html>
