@@ -11,7 +11,7 @@ The plugin runs inside Lidarr. It does not use a companion service, a companion 
 - Discovery is read-only.
 - Approval is expiring, single-use, and bound to the current source/Lidarr state.
 - Execution revalidates the plan immediately before submitting it to Lidarr.
-- The packaged native helper is SHA-256 verified, copied into a sealed anonymous `memfd`, and executed through `/proc/self/fd/198`.
+- The packaged native helper is SHA-256 verified, copied into a sealed anonymous `memfd`, and executed through `/proc/self/fd/4095`.
 - Native authorization binds the source device/inode/metadata, destination root, Lidarr IDs, and expiry.
 - Copy fallback is forbidden. Cross-device imports fail rather than copying.
 - If post-link validation fails, the helper fails and retains the created hardlink for inspection rather than risk deleting a concurrently replaced file. Do not retry automatically.
@@ -30,7 +30,7 @@ Before execution, these Lidarr Media Management settings must be exact:
 
 - **Copy Using Hardlinks:** enabled
 - **Use Script Import:** enabled
-- **Script Import Path:** `/proc/self/fd/198`
+- **Script Import Path:** `/proc/self/fd/4095`
 - **Set Permissions:** disabled
 - **File Date:** `None`
 - **Import Extra Files:** disabled

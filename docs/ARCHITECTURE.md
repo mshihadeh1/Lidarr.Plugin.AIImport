@@ -24,7 +24,7 @@
 
 ## Native helper trust gate
 
-At startup, the plugin validates the packaged helper against the build-time embedded SHA-256, copies it to a sealed `memfd_create` descriptor, and requires Script Import to point exactly at `/proc/self/fd/198`. Installation fails closed if descriptor 198 is already occupied; it never overwrites a host descriptor. The packaged path is not trusted for execution after startup. This design has been exercised through the real plugin in disposable Lidarr 3.1.2.4913.
+At startup, the plugin validates the packaged helper against the build-time embedded SHA-256, copies it to a sealed `memfd_create` descriptor, and requires Script Import to point exactly at `/proc/self/fd/4095`. The high descriptor avoids Lidarr's observed ordinary descriptor range. Installation fails closed if descriptor 4095 is occupied; it never overwrites a host descriptor. The packaged path is not trusted for execution after startup. This design has been exercised through the real plugin in disposable Lidarr 3.1.2.4913.
 
 ## Matching pipeline
 

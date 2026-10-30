@@ -7,8 +7,8 @@ namespace Lidarr.Plugin.AIImport.Filesystem;
 
 public static class SealedNativeHelper
 {
-    public const int ExecutionDescriptor = 198;
-    public const string ExecutionPath = "/proc/self/fd/198";
+    public const int ExecutionDescriptor = 4095;
+    public const string ExecutionPath = "/proc/self/fd/4095";
     private static readonly object Gate = new();
     private static bool _installed;
 
@@ -53,7 +53,7 @@ public static class SealedNativeHelper
                     if (installedDescriptor != ExecutionDescriptor)
                     {
                         close(installedDescriptor);
-                        throw new InvalidOperationException("The native helper cannot start because descriptor 198 is already occupied.");
+                        throw new InvalidOperationException($"The native helper cannot start because descriptor {ExecutionDescriptor} is already occupied.");
                     }
                 }
                 if (fcntl(ExecutionDescriptor, F_SETFD, 0) < 0) throw Error("clearing CLOEXEC on the native helper failed");

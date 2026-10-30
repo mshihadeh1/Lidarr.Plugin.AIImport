@@ -31,7 +31,7 @@ public sealed class SealedNativeHelperTests
             Assert.That(File.Exists(helper), Is.True, helper);
 
             var error = Assert.Throws<InvalidOperationException>(() => SealedNativeHelper.Install(helper));
-            Assert.That(error!.Message, Does.Contain("descriptor 198 is already occupied"));
+            Assert.That(error!.Message, Does.Contain($"descriptor {SealedNativeHelper.ExecutionDescriptor} is already occupied"));
 
             var marker = new byte[] { 0x5a };
             Assert.That(write(SealedNativeHelper.ExecutionDescriptor, marker, 1), Is.EqualTo((nint)1));

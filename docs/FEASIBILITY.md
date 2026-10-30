@@ -80,7 +80,7 @@ Two additional constraints were discovered:
 **Safety decision:** approval and execution are enabled only through explicit, expiring, single-use approvals after all readiness checks pass. The standalone v1 implementation:
 
 1. Require `CopyUsingHardlinks=true`, `replaceExistingFiles=false`, and `ImportMode=Copy`.
-2. Requires Lidarr Script Import to point exactly at sealed descriptor `/proc/self/fd/198`.
+2. Requires Lidarr Script Import to point exactly at sealed descriptor `/proc/self/fd/4095`.
 3. Requires tag writing/scrubbing, embedded artwork, file-date changes, permission changes, and extra-file imports to be disabled.
 4. Exposes `discover`, `approve`, `execute`, `status`, and `reconcile` through Lidarr's authenticated notification-provider action route.
 5. Packages and tests a no-copy native helper, including same-device success, cross-device failure, collision refusal, descriptor/path races, replay, expiry, and argument/environment validation.
