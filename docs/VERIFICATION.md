@@ -9,16 +9,16 @@
 
 ## Build and automated tests
 
-Verified on 2026-10-29 UTC:
+Verified on 2026-10-30 UTC:
 
 ```text
 Native descriptor-bound hardlink helper tests passed
 Lidarr.AIImport.Companion.Tests: 100 passed, 0 failed
-Lidarr.Plugin.AIImport.Tests: 86 passed, 0 failed
+Lidarr.Plugin.AIImport.Tests: 89 passed, 0 failed
 Build: 0 warnings, 0 errors
 ```
 
-The native suite covers exact authorization matching, replay, expiry, source replacement, symlinks, destination conflicts, cross-device failure, destination-parent rename, post-link replacement, no-delete handling for replacement races, durable-result reconciliation, and missing/mismatched Lidarr transfer context.
+The native suite covers exact authorization matching, replay, expiry, source replacement, symlinks, destination conflicts, cross-device failure, destination-parent rename, post-link replacement, no-delete handling for replacement races, durable-result reconciliation, and missing/mismatched Lidarr transfer context. Managed tests also verify that installation preserves an occupied host descriptor rather than overwriting it.
 
 The release ZIP is constrained to four entries:
 
@@ -31,7 +31,7 @@ No companion binary, companion configuration, runtime manifest, separate Lidarr 
 
 ## Disposable full-plugin verification
 
-Verified against a fresh disposable `ghcr.io/linuxserver-labs/prarr:lidarr-plugins` container running Lidarr `3.1.2.4913`.
+Verified against a disposable `ghcr.io/linuxserver-labs/prarr:lidarr-plugins` container running Lidarr `3.1.2.4913`, with the clean package installed and the sealed helper active at `/proc/self/fd/4095`.
 
 A real blackhole download containing ten generated FLAC files reached Lidarr's `importBlocked` state. The authenticated notification-provider action route completed:
 
