@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.0.1}"
 IMAGE="${DOTNET_IMAGE:-mcr.microsoft.com/dotnet/sdk@sha256:ff39a765f04619c8d146796fc09b38499ae5984f4a2a4c3a0a57d0022855daee}"
 CACHE_VOLUME="${NUGET_CACHE_VOLUME:-lidarr-ai-import-nuget}"
 
@@ -41,9 +41,9 @@ docker run --rm \
   "$IMAGE" sh -lc '
     set -eu
     version_args="-p:Version=$PLUGIN_VERSION -p:PackageVersion=$PLUGIN_VERSION -p:AssemblyVersion=$PLUGIN_ASSEMBLY_VERSION -p:FileVersion=$PLUGIN_ASSEMBLY_VERSION -p:InformationalVersion=$PLUGIN_VERSION -p:NativeHelperSha256=$NATIVE_HELPER_SHA256"
-    dotnet restore Lidarr.Plugin.AIImport.sln --configfile NuGet.config -p:NuGetAudit=false -p:EnableAnalyzers=false $version_args
-    dotnet test Lidarr.Plugin.AIImport.sln --no-restore --configuration Release --nologo --verbosity minimal -p:NuGetAudit=false -p:EnableAnalyzers=false $version_args
-    dotnet build src/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.csproj --configuration Release --target:Rebuild --no-restore --nologo -p:NuGetAudit=false -p:EnableAnalyzers=false $version_args
+    dotnet restore Lidarr.Plugin.AIImport.sln -m:1 --configfile NuGet.config -p:NuGetAudit=false -p:EnableAnalyzers=false $version_args
+    dotnet test Lidarr.Plugin.AIImport.sln -m:1 --no-restore --configuration Release --nologo --verbosity minimal -p:NuGetAudit=false -p:EnableAnalyzers=false $version_args
+    dotnet build src/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.csproj -m:1 --configuration Release --target:Rebuild --no-restore --nologo -p:NuGetAudit=false -p:EnableAnalyzers=false $version_args
     chown -R "$HOST_UID:$HOST_GID" /src/artifacts
   '
 
@@ -72,5 +72,6 @@ with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 (archive.with_suffix(archive.suffix + ".sha256")).write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
 PY
+python3 "$ROOT/scripts/verify-package.py" "$ROOT/artifacts/Lidarr.Plugin.AIImport-v${VERSION}.net8.0.zip" "$VERSION"
 
 printf 'Built %s\n' "$ROOT/artifacts/Lidarr.Plugin.AIImport-v${VERSION}.net8.0.zip"

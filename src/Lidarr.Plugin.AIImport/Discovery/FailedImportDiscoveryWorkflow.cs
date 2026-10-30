@@ -114,7 +114,9 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         var safeFiles = files.Select(x => new SourceFileDto(
             x.Id, x.Name, x.Artist, x.Album, x.Title, x.DiscNumber, x.TrackNumbers.ToArray(), x.DurationMs)).ToArray();
         var safeCandidates = candidates.Select(x => new ReleaseCandidateDto(
-            x.AlbumId, x.Id, x.ArtistId, x.Artist, x.Title, x.ForeignReleaseId)).ToArray();
+            x.AlbumId, x.Id, x.ArtistId, x.Artist, x.Title, x.ForeignReleaseId,
+            x.Tracks.Select(track => new ReleaseTrackDto(
+                track.Id, track.Title, track.DiscNumber, track.TrackNumber, track.DurationMs, track.HasFile)).ToArray())).ToArray();
         return new AiImportAnalysisDto(
             ComputeAnalysisId(item.DownloadId, files, candidates, proposal),
             item.DownloadId,

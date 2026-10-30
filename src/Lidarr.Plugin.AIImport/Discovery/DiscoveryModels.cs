@@ -77,7 +77,16 @@ public sealed record ReleaseCandidateDto(
     int? ArtistId,
     string Artist,
     string Title,
-    string? ForeignReleaseId);
+    string? ForeignReleaseId,
+    IReadOnlyList<ReleaseTrackDto> Tracks);
+
+public sealed record ReleaseTrackDto(
+    int TrackId,
+    string Title,
+    int DiscNumber,
+    string TrackNumber,
+    int DurationMs,
+    bool HasFile);
 
 public sealed record AiImportAnalysisDto(
     string AnalysisId,

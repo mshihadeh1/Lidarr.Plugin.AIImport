@@ -57,7 +57,7 @@ jobs:
 
       - name: Restore pinned Lidarr dependencies
         run: >-
-          dotnet restore Lidarr.Plugin.AIImport.sln --configfile NuGet.config
+          dotnet restore Lidarr.Plugin.AIImport.sln -m:1 --configfile NuGet.config
           -p:NuGetAudit=false -p:EnableAnalyzers=false
           -p:Version="$PLUGIN_VERSION" -p:PackageVersion="$PLUGIN_VERSION"
           -p:AssemblyVersion="$PLUGIN_ASSEMBLY_VERSION"
@@ -70,7 +70,7 @@ jobs:
       - name: Test
         # Native-helper attestation intentionally requires root-owned fixture files.
         run: >-
-          sudo --preserve-env=DOTNET_ROOT,PLUGIN_VERSION,PLUGIN_ASSEMBLY_VERSION,NATIVE_HELPER_SHA256 dotnet test tests/Lidarr.Plugin.AIImport.Tests/Lidarr.Plugin.AIImport.Tests.csproj
+          sudo --preserve-env=DOTNET_ROOT,PLUGIN_VERSION,PLUGIN_ASSEMBLY_VERSION,NATIVE_HELPER_SHA256 dotnet test tests/Lidarr.Plugin.AIImport.Tests/Lidarr.Plugin.AIImport.Tests.csproj -m:1
           --no-restore --configuration Release --nologo --verbosity minimal
           -p:NuGetAudit=false -p:EnableAnalyzers=false
           -p:Version="$PLUGIN_VERSION" -p:PackageVersion="$PLUGIN_VERSION" -p:AssemblyVersion="$PLUGIN_ASSEMBLY_VERSION"
@@ -96,7 +96,7 @@ jobs:
 
       - name: Build plugin
         run: >-
-          dotnet build src/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.csproj
+          dotnet build src/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.csproj -m:1
           --no-restore --configuration Release --nologo --target:Rebuild
           -p:NuGetAudit=false -p:EnableAnalyzers=false
           -p:Version="$PLUGIN_VERSION" -p:PackageVersion="$PLUGIN_VERSION" -p:AssemblyVersion="$PLUGIN_ASSEMBLY_VERSION"
@@ -114,6 +114,7 @@ jobs:
           printf 'Corresponding source: https://github.com/%s/tree/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" > artifacts/SOURCE.txt
           (cd artifacts && zip -q "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip" Lidarr.Plugin.AIImport.dll lidarr-hardlink-import LICENSE SOURCE.txt)
           (cd artifacts && sha256sum "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip" > "Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip.sha256")
+          python3 scripts/verify-package.py "artifacts/Lidarr.Plugin.AIImport-v${PLUGIN_VERSION}.net8.0.zip" "$PLUGIN_VERSION"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -139,7 +140,9 @@ jobs:
         with:
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            Standalone Lidarr AI Import plugin: authenticated failed-import discovery, explicit single-use approvals, strict hardlink-only execution, and fail-closed per-file reconciliation. No companion service or separate Lidarr API credentials are required.
+            Standalone Lidarr AI Import plugin with an authenticated in-Lidarr workspace for failed-import discovery, source-to-track review, explicit single-use approvals, strict hardlink-only execution, status, and fail-closed per-file reconciliation. No shell workflow, companion service, or separate Lidarr API credentials are required.
+
+            This release requests strict JSON Schema output from OpenAI-compatible endpoints and optionally sends `enable_thinking=false` for compatible Qwen/llama.cpp servers. Model output remains subject to independent strict validation.
 
             Minimum Lidarr Version: 3.1.2.4913
             Exact tested and supported Lidarr Version: 3.1.2.4913; newer versions are not supported by this release.

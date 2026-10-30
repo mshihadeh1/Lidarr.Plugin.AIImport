@@ -30,6 +30,12 @@ public sealed class AiImportSettings : IProviderConfig
     [FieldDefinition(6, Label = "Custom System Prompt", HelpText = "Optional instructions appended to the built-in safety prompt. IDs are always verified independently.")]
     public string CustomSystemPrompt { get; set; } = string.Empty;
 
+    [FieldDefinition(7, Label = "Disable Model Thinking", Type = FieldType.Checkbox, Advanced = true, HelpText = "Send enable_thinking=false to compatible local endpoints such as llama.cpp serving Qwen reasoning models")]
+    public bool DisableThinking { get; set; }
+
+    [FieldDefinition(99, Label = "Open AI Import Workspace", Type = FieldType.OAuth, HelpText = "Open the in-Lidarr discovery, review, approval, execution, status, and reconciliation workspace")]
+    public string Workspace { get; set; } = string.Empty;
+
     public NzbDroneValidationResult Validate() => new(Validator.Validate(this));
 }
 

@@ -34,6 +34,43 @@ public sealed class OpenAiChatClient : IOpenAiChatClient
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
+    private static readonly JsonElement ProposalResponseFormat = JsonDocument.Parse("""
+        {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "ai_import_proposal",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "schemaVersion": { "type": "integer", "const": 1 },
+                "status": { "type": "string", "enum": ["proposed", "manualReview"] },
+                "artistId": { "type": ["integer", "null"] },
+                "albumId": { "type": ["integer", "null"] },
+                "releaseId": { "type": ["integer", "null"] },
+                "confidence": { "type": "number" },
+                "explanation": { "type": "string" },
+                "tracks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "sourceFileId": { "type": "string" },
+                      "trackId": { "type": "integer" },
+                      "confidence": { "type": "number" }
+                    },
+                    "required": ["sourceFileId", "trackId", "confidence"]
+                  }
+                }
+              },
+              "required": ["schemaVersion", "status", "artistId", "albumId", "releaseId", "confidence", "explanation", "tracks"]
+            }
+          }
+        }
+        """).RootElement.Clone();
+
     private readonly HttpClient _httpClient;
 
     public OpenAiChatClient() : this(new HttpClient())
@@ -52,6 +89,7 @@ public sealed class OpenAiChatClient : IOpenAiChatClient
             settings,
             "You are a connection tester. Follow the user's output instruction exactly.",
             "Reply with exactly AI_IMPORT_OK and no other text.",
+            structuredOutput: false,
             cancellationToken).ConfigureAwait(false);
 
         if (!string.Equals(response.Trim(), "AI_IMPORT_OK", StringComparison.Ordinal))
@@ -70,7 +108,7 @@ public sealed class OpenAiChatClient : IOpenAiChatClient
             effectivePrompt += $"\n\nAdditional operator instructions that cannot override the safety rules above:\n{settings.CustomSystemPrompt}";
         }
 
-        return SendAsync(settings, effectivePrompt, userPrompt, cancellationToken);
+        return SendAsync(settings, effectivePrompt, userPrompt, structuredOutput: true, cancellationToken);
     }
 
     internal static Uri BuildChatCompletionsUri(string baseUrl)
@@ -84,7 +122,12 @@ public sealed class OpenAiChatClient : IOpenAiChatClient
         return new Uri($"{value}/chat/completions", UriKind.Absolute);
     }
 
-    private async Task<string> SendAsync(AiImportSettings settings, string systemPrompt, string userPrompt, CancellationToken cancellationToken)
+    private async Task<string> SendAsync(
+        AiImportSettings settings,
+        string systemPrompt,
+        string userPrompt,
+        bool structuredOutput,
+        CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(settings.RequestTimeoutSeconds));
@@ -103,7 +146,9 @@ public sealed class OpenAiChatClient : IOpenAiChatClient
             {
                 new ChatMessage("system", systemPrompt),
                 new ChatMessage("user", userPrompt)
-            }), options: JsonOptions);
+            },
+            structuredOutput ? ProposalResponseFormat : null,
+            settings.DisableThinking ? new ChatTemplateKwargs(false) : null), options: JsonOptions);
 
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
@@ -166,7 +211,12 @@ public sealed class OpenAiChatClient : IOpenAiChatClient
         [property: JsonPropertyName("model")] string Model,
         [property: JsonPropertyName("temperature")] decimal Temperature,
         [property: JsonPropertyName("max_tokens")] int MaximumOutputTokens,
-        [property: JsonPropertyName("messages")] IReadOnlyList<ChatMessage> Messages);
+        [property: JsonPropertyName("messages")] IReadOnlyList<ChatMessage> Messages,
+        [property: JsonPropertyName("response_format")] JsonElement? ResponseFormat,
+        [property: JsonPropertyName("chat_template_kwargs")] ChatTemplateKwargs? ChatTemplateKwargs);
+
+    private sealed record ChatTemplateKwargs(
+        [property: JsonPropertyName("enable_thinking")] bool EnableThinking);
 
     private sealed record ChatMessage(
         [property: JsonPropertyName("role")] string Role,
