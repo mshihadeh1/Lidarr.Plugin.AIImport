@@ -12,6 +12,7 @@
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="NativeHelperSha256" Value="$(NativeHelperSha256)" />
+    <InternalsVisibleTo Include="Lidarr.Plugin.AIImport.Tests" />
     <ProjectReference Include="../../vendor/Lidarr/src/NzbDrone.Common/Lidarr.Common.csproj">
       <Private>false</Private>
       <ExcludeAssets>runtime</ExcludeAssets>

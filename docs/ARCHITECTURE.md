@@ -15,16 +15,16 @@
 - `Llm/IOpenAiChatClient`: provider-neutral OpenAI chat-completions abstraction.
 - `Matching/StructuredMatchParser`: current strict runtime enforcement layer, including fenced-JSON fallback for models without native JSON-schema support. The published schema documents representable constraints but cannot detect duplicate object keys or uniqueness by only `sourceFileId`.
 - Plugin `Discovery`: `importBlocked`/`importFailed` tracked downloads and direct `IManualImportService` candidates.
-- Companion `Metadata`: release and track ownership retrieved from Lidarr; embedded MusicBrainz track IDs are accepted only when they match a returned Lidarr track.
-- Companion `Matching`: maximum-cardinality, maximum-score one-to-one deterministic assignment; existing library tracks are excluded. Ambiguous results remain manual review in Phase 2.
-- Companion `ImportSafety`: authenticated assessment of the exact script path and every Lidarr setting that could copy, retag, chmod, timestamp, embed artwork, import extras, or persist release-selection changes. Execution remains blocked until every prerequisite passes and deployment sharing is explicitly confirmed.
+- Standalone `Metadata`: release and track ownership retrieved directly from Lidarr; embedded MusicBrainz track IDs are accepted only when they match a returned Lidarr track.
+- Standalone `Matching`: maximum-cardinality, maximum-score one-to-one deterministic assignment; existing library tracks are excluded. Ambiguous results remain manual review.
+- Standalone `ImportSafety`: assessment of the exact script path and every Lidarr setting that could copy, retag, chmod, timestamp, embed artwork, import extras, or persist release-selection changes. Execution fails closed unless every prerequisite passes.
 - Packaged `lidarr-hardlink-import`: native Linux helper for immutable authorization publication, descriptor-bound hardlink creation, destination-root confinement, durable claims/results, and post-link identity verification. It never defers a missing `HardLinkOrCopy` context to Lidarr's copy-capable transfer path.
 - Standalone approval/execution/reconciliation: durable single-use approvals below Lidarr app data, native authorization bindings, one Lidarr command receipt, and exact per-file fail-closed reconciliation.
 - Control actions are `discover`, `approve`, `execute`, `reconcile`, and `status`; imports never run directly from discovery.
 
 ## Native helper trust gate
 
-The helper attestor requires a root-owned, single-link, non-writable regular file and executes the already-open descriptor. Ordinary same-UID plugin extraction followed by mode `0555` does **not** satisfy this trust boundary, so execution fails closed. A sealed `memfd_create` installation with an embedded build hash and exact `/proc/self/fd/<fd>` Script Import path is the preferred standalone deployment design and remains a release blocker until container-verified.
+At startup, the plugin validates the packaged helper against the build-time embedded SHA-256, copies it to a sealed `memfd_create` descriptor, and requires Script Import to point exactly at `/proc/self/fd/198`. Installation fails closed if descriptor 198 is already occupied; it never overwrites a host descriptor. The packaged path is not trusted for execution after startup. This design has been exercised through the real plugin in disposable Lidarr 3.1.2.4913.
 
 ## Matching pipeline
 

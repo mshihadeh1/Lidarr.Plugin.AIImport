@@ -42,7 +42,7 @@ docker run --rm \
     set -eu
     version_args="-p:Version=$PLUGIN_VERSION -p:PackageVersion=$PLUGIN_VERSION -p:AssemblyVersion=$PLUGIN_ASSEMBLY_VERSION -p:FileVersion=$PLUGIN_ASSEMBLY_VERSION -p:InformationalVersion=$PLUGIN_VERSION -p:NativeHelperSha256=$NATIVE_HELPER_SHA256"
     dotnet restore Lidarr.Plugin.AIImport.sln --configfile NuGet.config -p:NuGetAudit=false -p:EnableAnalyzers=false $version_args
-    dotnet test Lidarr.Plugin.AIImport.sln --no-restore --configuration Release --nologo --verbosity minimal -p:NuGetAudit=false -p:EnableAnalyzers=false
+    dotnet test Lidarr.Plugin.AIImport.sln --no-restore --configuration Release --nologo --verbosity minimal -p:NuGetAudit=false -p:EnableAnalyzers=false $version_args
     dotnet build src/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.csproj --configuration Release --target:Rebuild --no-restore --nologo -p:NuGetAudit=false -p:EnableAnalyzers=false $version_args
     chown -R "$HOST_UID:$HOST_GID" /src/artifacts
   '

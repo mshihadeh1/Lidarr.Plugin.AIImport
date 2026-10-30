@@ -211,7 +211,8 @@ mkdir "$TMP/library/rename-parent"
 : > "$hook.go"
 if wait "$pid"; then fail "destination-parent rename after link succeeded"; fi
 [ ! -e "$TMP/library/rename-parent/track.flac" ] || fail "parent rename wrote at the replacement path"
-[ ! -e "$TMP/library/renamed-parent/track.flac" ] || fail "parent rename retained a hardlink outside the authorized path"
+[ -e "$TMP/library/renamed-parent/track.flac" ] || fail "parent rename lost the created hardlink"
+[ "$(stat -c '%d:%i' "$TMP/source/parent-rename.flac")" = "$(stat -c '%d:%i' "$TMP/library/renamed-parent/track.flac")" ] || fail "parent rename retained an unrelated file"
 
 printf 'rollback replacement source\n' > "$TMP/source/rollback-replacement.flac"
 mkdir "$TMP/library/rollback-parent"
@@ -232,6 +233,27 @@ printf 'rollback replacement sentinel\n' > "$TMP/library/rollback-parent-moved/t
 : > "$hook.go"
 if wait "$pid"; then fail "rollback replacement race succeeded"; fi
 [ "$(cat "$TMP/library/rollback-parent-moved/track.flac")" = "rollback replacement sentinel" ] || fail "rollback deleted an unrelated replacement"
+
+printf 'post-check rollback source\n' > "$TMP/source/post-check-rollback.flac"
+mkdir "$TMP/library/post-check-parent"
+after_hook="$TMP/post-check-after-link"
+check_hook="$TMP/post-check-rollback-check"
+authorize "$TMP/source/post-check-rollback.flac" "$TMP/library/post-check-parent/track.flac" "$TMP/library/post-check-parent"
+AIIMPORT_TEST_AFTER_LINK=$after_hook AIIMPORT_TEST_AFTER_ROLLBACK_CHECK=$check_hook AIIMPORT_AUTHORIZATION_DIR="$AUTH" lidarr_transfermode=HardLinkOrCopy \
+    lidarr_artist_id=5 lidarr_album_id=10 lidarr_trackfile_trackids=1001 \
+    lidarr_sourcepath="$TMP/source/post-check-rollback.flac" lidarr_destinationpath="$TMP/library/post-check-parent/track.flac" \
+    "$HELPER" "$TMP/source/post-check-rollback.flac" "$TMP/library/post-check-parent/track.flac" & pid=$!
+wait_marker "$after_hook"
+mv "$TMP/library/post-check-parent" "$TMP/library/post-check-parent-moved"
+mkdir "$TMP/library/post-check-parent"
+: > "$after_hook.go"
+wait_marker "$check_hook"
+rm "$TMP/library/post-check-parent-moved/track.flac"
+printf 'post-check replacement sentinel\n' > "$TMP/library/post-check-parent-moved/track.flac"
+: > "$check_hook.go"
+if wait "$pid"; then fail "post-check rollback replacement race succeeded"; fi
+[ -f "$TMP/library/post-check-parent-moved/track.flac" ] || fail "post-check rollback deleted an unrelated replacement"
+[ "$(cat "$TMP/library/post-check-parent-moved/track.flac")" = "post-check replacement sentinel" ] || fail "post-check rollback changed an unrelated replacement"
 
 printf 'destination replacement source\n' > "$TMP/source/destination-replacement.flac"
 hook="$TMP/destination-replacement"

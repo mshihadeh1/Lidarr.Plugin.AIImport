@@ -708,13 +708,13 @@ int main(int argc, char **argv)
             test_pause("AIIMPORT_TEST_BEFORE_ROLLBACK");
             int rollback_candidate = openat(destination_directory, destination_name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
             if (rollback_candidate < 0 || !same_regular_inode(rollback_candidate, &source_status))
-                fail(EXIT_DESTINATION, "created hardlink was replaced before rollback; replacement was retained");
+                fail(EXIT_DESTINATION, "created hardlink was replaced after post-link validation failed; replacement was retained");
             close(rollback_candidate);
-            if (unlinkat(destination_directory, destination_name, 0) != 0 || fsync(destination_directory) != 0)
-                fail(EXIT_DESTINATION, "authorized identity changed and the created hardlink could not be rolled back");
+            test_pause("AIIMPORT_TEST_AFTER_ROLLBACK_CHECK");
+            fail(EXIT_DESTINATION, "post-link validation failed; the created hardlink was retained because Linux has no conditional unlink-by-inode primitive");
         }
         fail(EXIT_DESTINATION, created_link
-            ? "authorized identity changed after hardlink creation; created hardlink was rolled back"
+            ? "post-link validation failed; the destination path was retained for inspection"
             : "authorized identity changed while reconciling an existing hardlink");
     }
     publish_result(authfd, &selected, &source_status, 1);

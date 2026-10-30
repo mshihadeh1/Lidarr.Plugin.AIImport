@@ -96,7 +96,21 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
                 item.Artist?.Id != plan.ArtistId || item.Album?.Id != plan.AlbumId || item.Release?.Id != plan.ReleaseId)
                 throw new StaleApprovalException("Lidarr rejected or changed the approved corrective mapping.");
         }
+        if (HasOverlappingActiveManualImport(_commands.All(), plan.Files.Select(file => file.SourcePath).ToArray()))
+            throw new StaleApprovalException("A queued or started manual-import command already overlaps this approval.");
         return Task.CompletedTask;
+    }
+
+    internal static bool HasOverlappingActiveManualImport(
+        IEnumerable<CommandModel> commands,
+        IReadOnlyCollection<string> approvedSourcePaths)
+    {
+        var approved = approvedSourcePaths.ToHashSet(StringComparer.Ordinal);
+        return commands.Any(model =>
+            model.Status is CommandStatus.Queued or CommandStatus.Started &&
+            model.Body is ManualImportCommand manual &&
+            manual.Files is not null &&
+            manual.Files.Any(file => !string.IsNullOrWhiteSpace(file.Path) && approved.Contains(file.Path)));
     }
 
     public Task<LidarrCommandReceipt> SubmitManualImportAsync(ApprovedImportPlan plan, CancellationToken cancellationToken)
@@ -111,7 +125,7 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
         {
             ImportMode = ImportMode.Copy,
             ReplaceExistingFiles = false,
-            Files = plan.Files.Select(file => new ManualImportFile
+            Files = plan.Files.Select(file => (ManualImportFile)new FreshManualImportFile
             {
                 Path = file.SourcePath,
                 ArtistId = plan.ArtistId,
@@ -126,8 +140,18 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
             }).ToList()
         };
         var queued = _commands.Push(command, CommandPriority.High);
+        if (!ReferenceEquals(queued.Body, command))
+            throw new InvalidDataException("Lidarr returned an existing manual-import command instead of creating a fresh command.");
         if (queued.Id <= 0 || !string.Equals(queued.Name, "ManualImport", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Lidarr did not return a valid manual-import command receipt.");
         return Task.FromResult(new LidarrCommandReceipt(queued.Id, queued.Status.ToString().ToLowerInvariant()));
     }
+}
+
+internal sealed class FreshManualImportFile : ManualImportFile
+{
+    private readonly Guid _submissionIdentity = Guid.NewGuid();
+
+    public override bool Equals(object? obj) => ReferenceEquals(this, obj);
+    public override int GetHashCode() => _submissionIdentity.GetHashCode();
 }

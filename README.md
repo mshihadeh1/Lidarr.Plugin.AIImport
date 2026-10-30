@@ -14,6 +14,7 @@ The plugin runs inside Lidarr. It does not use a companion service, a companion 
 - The packaged native helper is SHA-256 verified, copied into a sealed anonymous `memfd`, and executed through `/proc/self/fd/198`.
 - Native authorization binds the source device/inode/metadata, destination root, Lidarr IDs, and expiry.
 - Copy fallback is forbidden. Cross-device imports fail rather than copying.
+- If post-link validation fails, the helper fails and retains the created hardlink for inspection rather than risk deleting a concurrently replaced file. Do not retry automatically.
 - Success requires native-transfer, Lidarr command, history, track-file, and track-binding reconciliation.
 - Workflow state is stored beneath `<Lidarr app data>/ai-import`.
 
