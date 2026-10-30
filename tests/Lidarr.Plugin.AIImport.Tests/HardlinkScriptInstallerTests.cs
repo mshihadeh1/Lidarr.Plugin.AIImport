@@ -31,10 +31,10 @@ public sealed class HardlinkScriptInstallerTests
             Assert.Multiple(() =>
             {
                 Assert.That(result, Is.True);
-                Assert.That(mode.HasFlag(UnixFileMode.UserExecute), Is.True);
-                Assert.That(mode.HasFlag(UnixFileMode.GroupExecute), Is.True);
-                Assert.That(mode.HasFlag(UnixFileMode.OtherExecute), Is.True);
-                Assert.That(mode.HasFlag(UnixFileMode.OtherWrite), Is.False);
+                Assert.That(mode, Is.EqualTo(
+                    UnixFileMode.UserRead | UnixFileMode.UserExecute |
+                    UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                    UnixFileMode.OtherRead | UnixFileMode.OtherExecute));
             });
         }
         finally
@@ -76,7 +76,10 @@ public sealed class HardlinkScriptInstallerTests
                 NLog.LogManager.GetLogger("hardlink-installer-test"));
             handler.Handle(new NzbDrone.Core.Lifecycle.ApplicationStartingEvent());
 
-            Assert.That(File.GetUnixFileMode(script).HasFlag(UnixFileMode.UserExecute), Is.True);
+            Assert.That(File.GetUnixFileMode(script), Is.EqualTo(
+                UnixFileMode.UserRead | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute));
         }
         finally
         {

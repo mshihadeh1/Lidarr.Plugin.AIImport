@@ -47,4 +47,14 @@ public sealed class StrictProposalValidatorTests
 
         Assert.Throws<ProposalValidationException>(() => StrictProposalValidator.ParseAndValidate(json, Files, Releases));
     }
+
+    [Test]
+    public void Source_with_any_current_lidarr_rejection_cannot_be_proposed()
+    {
+        var rejected = Files[0] with { Rejections = ["Not an upgrade for existing track file"] };
+        const string json = """{"schemaVersion":1,"status":"proposed","artistId":5,"albumId":10,"releaseId":101,"confidence":0.94,"explanation":"bad","tracks":[{"sourceFileId":"f1","trackId":1001,"confidence":0.95}]}""";
+
+        Assert.Throws<ProposalValidationException>(() =>
+            StrictProposalValidator.ParseAndValidate(json, [rejected], Releases));
+    }
 }

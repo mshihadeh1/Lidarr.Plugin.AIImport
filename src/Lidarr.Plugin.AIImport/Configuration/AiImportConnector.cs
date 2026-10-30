@@ -1,6 +1,6 @@
 using FluentValidation.Results;
-using Lidarr.Plugin.AIImport.Configuration;
 using Lidarr.Plugin.AIImport.Llm;
+using Lidarr.Plugin.AIImport.Workflows;
 using NzbDrone.Core.Notifications;
 using NzbDrone.Core.ThingiProvider;
 
@@ -9,16 +9,39 @@ namespace Lidarr.Plugin.AIImport.Configuration;
 public sealed class AiImportConnector : NotificationBase<AiImportSettings>
 {
     private readonly IOpenAiChatClient _client;
+    private readonly IAiImportDiscoverWorkflow? _workflow;
+    private readonly IStandaloneAiImportWorkflow? _standaloneWorkflow;
+    private readonly IAiImportSettingsResolver? _settingsResolver;
 
     public AiImportConnector(IOpenAiChatClient client)
     {
         _client = client;
     }
 
+    public AiImportConnector(
+        IOpenAiChatClient client,
+        IAiImportDiscoverWorkflow workflow,
+        IAiImportSettingsResolver settingsResolver)
+    {
+        _client = client;
+        _workflow = workflow;
+        _settingsResolver = settingsResolver;
+    }
+
+    public AiImportConnector(
+        IOpenAiChatClient client,
+        IAiImportDiscoverWorkflow workflow,
+        IStandaloneAiImportWorkflow standaloneWorkflow,
+        IAiImportSettingsResolver settingsResolver)
+        : this(client, workflow, settingsResolver)
+    {
+        _standaloneWorkflow = standaloneWorkflow;
+    }
+
     public override string Name => "AI Import";
     public override string Link => "https://github.com/mshihadeh1/Lidarr.Plugin.AIImport";
     public override ProviderMessage Message => new(
-        "Read-only preview foundation. This release configures and tests the LLM endpoint; it does not import or modify files.",
+        "Standalone approval-gated strict-hardlink import for Lidarr 3.1.2.4913. Review proposals before approving.",
         ProviderMessageType.Info);
 
     public override ValidationResult Test()
@@ -36,6 +59,40 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
             });
         }
     }
+
+    public override object RequestAction(string action, IDictionary<string, string> query)
+    {
+        var allowed = action is "discover" or "approve" or "execute" or "reconcile" or "status";
+        if (!allowed)
+        {
+            throw new ArgumentException("Unknown AI Import action.", nameof(action));
+        }
+
+        if (_workflow is null || _settingsResolver is null)
+        {
+            throw new InvalidOperationException("Standalone discovery services are unavailable.");
+        }
+
+        // Definition and query are request-controlled on the provider action route.
+        // Only persisted, enabled settings are allowed to reach the workflow or LLM.
+        var savedSettings = _settingsResolver.ResolveEnabled(Definition.Id);
+        if (action == "discover") return _workflow.Discover(savedSettings);
+        if (_standaloneWorkflow is null)
+            throw new InvalidOperationException("Standalone approval and execution services are unavailable.");
+        return action switch
+        {
+            "approve" => _standaloneWorkflow.Approve(RequiredQuery(query, "analysisId")),
+            "execute" => _standaloneWorkflow.Execute(RequiredQuery(query, "approvalId")),
+            "reconcile" => _standaloneWorkflow.Reconcile(RequiredQuery(query, "approvalId")),
+            "status" => _standaloneWorkflow.Status(RequiredQuery(query, "approvalId")),
+            _ => throw new ArgumentException("Unknown AI Import action.", nameof(action))
+        };
+    }
+
+    private static string RequiredQuery(IDictionary<string, string> query, string name) =>
+        query.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value
+            : throw new ArgumentException($"The {name} query value is required.", nameof(query));
 
     private static string Sanitize(string message, string apiKey)
     {

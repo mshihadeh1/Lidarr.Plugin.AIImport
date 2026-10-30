@@ -1,3 +1,6 @@
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+
 namespace Lidarr.AIImport.Companion.Models;
 
 public sealed record LidarrSystemStatus(string Version, string PackageVersion, string Branch);
@@ -24,7 +27,17 @@ public sealed record SourceFileCandidate(
     string? TrackMusicBrainzId,
     IReadOnlyList<string> Rejections,
     int? ArtistId = null,
-    int? AlbumId = null);
+    int? AlbumId = null,
+    string? ArtistMusicBrainzId = null,
+    string? AlbumMusicBrainzId = null,
+    string? ReleaseMusicBrainzId = null,
+    string? RecordingMusicBrainzId = null,
+    [property: JsonIgnore] string? SourcePath = null,
+    [property: JsonIgnore] JsonObject? Quality = null,
+    [property: JsonIgnore] int IndexerFlags = 0,
+    [property: JsonIgnore] string? DownloadId = null,
+    [property: JsonIgnore] long Size = 0,
+    [property: JsonIgnore] int ManualImportId = 0);
 
 public sealed record TrackCandidate(
     int Id,
@@ -73,4 +86,12 @@ public sealed record AnalysisResult(
     IReadOnlyList<SourceFileCandidate> Files,
     IReadOnlyList<ReleaseCandidate> Candidates,
     bool UsedLlm,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    MissingAlbumProposal? MissingAlbum = null);
+
+public sealed record MissingAlbumProposal(
+    Guid ArtistMusicBrainzId,
+    Guid ReleaseGroupMusicBrainzId,
+    Guid ReleaseMusicBrainzId,
+    string Artist,
+    string Album);

@@ -6,7 +6,7 @@
 2. **The LLM output is untrusted.** Parse strict JSON, reject unknown fields, then verify every ID and relationship against current metadata.
 3. **Filesystem operations belong to Lidarr.** The project will not implement an independent mover/copier/tagger.
 4. **Imports are approval-gated.** Automatic import remains out of scope until manual mode has operational evidence.
-5. **Companion metadata is authenticated.** Every `/api` request requires the independently configured `X-Companion-Api-Key`; `/health` contains no library metadata and remains unauthenticated.
+5. **The plugin is standalone.** It uses direct in-process Lidarr services and the authenticated `AiImportConnector.RequestAction` provider route. It has no companion URL, self-HTTP, or separate Lidarr API credentials.
 
 ## Components
 
@@ -14,12 +14,17 @@
 - `Configuration/AiImportConnector`: existing Connect-provider UI and Test Connection integration.
 - `Llm/IOpenAiChatClient`: provider-neutral OpenAI chat-completions abstraction.
 - `Matching/StructuredMatchParser`: current strict runtime enforcement layer, including fenced-JSON fallback for models without native JSON-schema support. The published schema documents representable constraints but cannot detect duplicate object keys or uniqueness by only `sourceFileId`.
-- Companion `Discovery`: paginated `importBlocked`/`importFailed` queue items and public manual-import API candidates.
-- Companion `Metadata`: release and track ownership retrieved from Lidarr; embedded MusicBrainz track IDs are accepted only when they match a returned Lidarr track.
-- Companion `Matching`: maximum-cardinality, maximum-score one-to-one deterministic assignment; existing library tracks are excluded. Ambiguous results remain manual review in Phase 2.
-- Companion `ImportSafety`: authenticated read-only assessment of the exact script path and every Lidarr setting that could copy, retag, chmod, timestamp, embed artwork, or import extras. This assessment does not enable execution.
-- Packaged `lidarr-hardlink-import`: demonstrates interception of `HardLinkOrCopy`, invokes `ln` without a copy path, verifies source/destination device+inode identity, and returns a hard failure rather than Lidarr's defer code when linking fails. It remains a tested feasibility primitive, not an execution-ready security boundary, because shell pathname operations cannot eliminate TOCTOU races.
-- Future companion UI: selection/review/approval only, using Lidarr's REST API.
+- Plugin `Discovery`: `importBlocked`/`importFailed` tracked downloads and direct `IManualImportService` candidates.
+- Standalone `Metadata`: release and track ownership retrieved directly from Lidarr; embedded MusicBrainz track IDs are accepted only when they match a returned Lidarr track.
+- Standalone `Matching`: maximum-cardinality, maximum-score one-to-one deterministic assignment; existing library tracks are excluded. Ambiguous results remain manual review.
+- Standalone `ImportSafety`: assessment of the exact script path and every Lidarr setting that could copy, retag, chmod, timestamp, embed artwork, import extras, or persist release-selection changes. Execution fails closed unless every prerequisite passes.
+- Packaged `lidarr-hardlink-import`: native Linux helper for immutable authorization publication, descriptor-bound hardlink creation, destination-root confinement, durable claims/results, and post-link identity verification. It never defers a missing `HardLinkOrCopy` context to Lidarr's copy-capable transfer path.
+- Standalone approval/execution/reconciliation: durable single-use approvals below Lidarr app data, native authorization bindings, one Lidarr command receipt, and exact per-file fail-closed reconciliation.
+- Control actions are `discover`, `approve`, `execute`, `reconcile`, and `status`; imports never run directly from discovery.
+
+## Native helper trust gate
+
+At startup, the plugin validates the packaged helper against the build-time embedded SHA-256, copies it to a sealed `memfd_create` descriptor, and requires Script Import to point exactly at `/proc/self/fd/4095`. The high descriptor avoids Lidarr's observed ordinary descriptor range. Installation fails closed if descriptor 4095 is occupied; it never overwrites a host descriptor. The packaged path is not trusted for execution after startup. This design has been exercised through the real plugin in disposable Lidarr 3.1.2.4913.
 
 ## Matching pipeline
 
@@ -29,20 +34,20 @@
 4. Query only Lidarr's configured public REST API in Phase 2.
 5. Exclude existing library tracks and require every source file to receive a unique mapping based on IDs, disc/track numbers, titles, and durations.
 6. If one candidate is unambiguous, propose it without an LLM.
-7. In Phase 2, return ambiguous matches for manual review. A future LLM ranker may receive only minimal candidate metadata with opaque file IDs.
-8. Strictly parse any future model response.
+7. Return ambiguous matches for manual review or send only minimal candidate metadata with opaque file IDs to the configured ranker.
+8. Strictly parse every model response.
 9. Verify every returned ID is positive and in the supplied candidate set, source IDs are unique, album/release ownership is explicit, and tracks come from the release-scoped Lidarr endpoint with matching album ownership. Apply these invariants to deterministic and future model proposals alike.
-10. Return a dry-run proposal or manual review; never invent a release.
+10. Return a proposal or manual review; never invent a release. A proposal still requires explicit approval and complete revalidation before execution.
 
-`proposed` is a metadata-mapping result, not an assertion that Lidarr can import the file. Current Lidarr rejection reasons are preserved with each source file and cannot lead to execution in Phase 2, which exposes no approval or import route.
+`proposed` is a metadata-mapping result, not an assertion that Lidarr can import the file. Current Lidarr rejection reasons are preserved; approval reconstructs and revalidates the exact current plan.
 
-## Import state machine (future)
+## Import state machine
 
-`Discovered → Proposed → Validated → Approved → HardlinkPreflightPassed → NativeImportQueued → NativeImportSucceeded → HardlinkVerified`
+`Discovered → Proposed → Validated → Approved → Executing → NativeAuthorizationsPublished → CommandRecorded → ReconciledSucceeded`
 
-Every transition is append-only and idempotent by a digest of download ID, source file identity, selected release, mappings, and settings version. Any validation change invalidates approval.
+Approvals bind the analysis ID, download ID, source identity, selected release and tracks, quality/indexer metadata, safety fingerprint, and artist destination root. Any validation change invalidates approval. Execution is single-use; indeterminate outcomes require reconciliation rather than retry.
 
-Lidarr 3.1.2.4913 can report the `ManualImport` command as completed even when an individual import script fails. Command status is therefore not proof of import success. Future execution must reconcile the expected track-file record and source/destination identity; it must never retry an indeterminate command automatically.
+Lidarr 3.1.2.4913 can report the `ManualImport` command as completed even when an individual import script fails. Command status is therefore not proof of import success. Reconciliation requires the durable native result, hardlink identity, history event, enriched album-scoped track-file record, and track binding; an indeterminate command is never retried automatically.
 
 ## Data minimization
 

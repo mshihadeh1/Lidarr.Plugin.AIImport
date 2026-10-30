@@ -53,7 +53,7 @@ Source: [`Startup.cs`](https://github.com/Lidarr/Lidarr/blob/e42a7ca4fd633e021d6
 Smallest supported UX:
 
 - Plugin configuration and Test button under Lidarr **Settings → Connect**.
-- A narrowly scoped companion web UI/service for selection, proposal review, and approval, communicating only with Lidarr's public REST API.
+- Authenticated `AiImportConnector.RequestAction` calls for selection, proposal review, approval, execution, status, and reconciliation, using only direct in-process Lidarr services.
 - If a future plugin SDK adds frontend slots, move that UX into Lidarr without changing the matching core.
 
 ## Hardlink feasibility and controlled proof
@@ -68,7 +68,7 @@ Consequences:
 - Docker paths that look related can still be different mounts/devices.
 - Native Lidarr does not expose the actual transfer mode in the manual-import command result.
 
-The built-in import-script hook runs before `DiskTransferService`. Exit code `0` tells Lidarr the transfer completed, exit code `3` defers to Lidarr's unsafe `HardLinkOrCopy`, and every other code fails that file. The packaged script never returns `3` for a requested `HardLinkOrCopy`: it creates a hardlink with `ln`, verifies device/inode equality, and otherwise fails.
+The built-in import-script hook runs before `DiskTransferService`. Exit code `0` tells Lidarr the transfer completed, exit code `3` defers to Lidarr's unsafe `HardLinkOrCopy`, and every other code fails that file. The packaged native helper never returns `3` for a requested `HardLinkOrCopy`: it performs a descriptor-bound hardlink, verifies device/inode equality, and otherwise fails.
 
 This was exercised through Lidarr's real `ManualImport` command in a disposable 3.1.2.4913 container. Same-filesystem import preserved source hash, size, mtime, mode, UID/GID, and device/inode while creating native track-file/history records. A cross-device import exited `24`, created no destination, and created no track-file record.
 
@@ -77,15 +77,15 @@ Two additional constraints were discovered:
 - Lidarr's `StringDictionary` lowercases script environment keys on Linux; the script must read `lidarr_transfermode`, `lidarr_sourcepath`, and `lidarr_destinationpath`.
 - A `ManualImport` command can still report `completed` and “Manually imported 1 files” after the individual script import failed. Command status alone is unsafe evidence.
 
-**Safety decision:** approval/import routes remain disabled. The current Phase 3 foundation:
+**Safety decision:** approval and execution are enabled only through explicit, expiring, single-use approvals after all readiness checks pass. The standalone v1 implementation:
 
 1. Require `CopyUsingHardlinks=true`, `replaceExistingFiles=false`, and `ImportMode=Copy`.
-2. Requires Lidarr script import to point exactly at the packaged script.
+2. Requires Lidarr Script Import to point exactly at sealed descriptor `/proc/self/fd/4095`.
 3. Requires tag writing/scrubbing, embedded artwork, file-date changes, permission changes, and extra-file imports to be disabled.
-4. Exposes these checks through authenticated read-only `GET /api/v1/import-safety`, with `executionEnabled=false`.
-5. Packages and tests the no-copy script, including same-device success, cross-device failure, collision refusal, and argument/environment validation.
+4. Exposes `discover`, `approve`, `execute`, `status`, and `reconcile` through Lidarr's authenticated notification-provider action route.
+5. Packages and tests a no-copy native helper, including same-device success, cross-device failure, collision refusal, descriptor/path races, replay, expiry, and argument/environment validation.
 
-The script proves that Script Import can prevent the ordinary copy fallback while retaining Lidarr's native database/history pipeline. It does not prove a race-free security boundary: independent review identified pathname TOCTOU and failure-cleanup races that a POSIX shell implementation cannot eliminate. A finished approval flow therefore requires a descriptor-safe native helper or pinned Lidarr implementation, plus fresh proposal/configuration validation, exact post-import reconciliation, idempotency, and explicit handling of Lidarr's false-positive command completion. A native upstream `HardLink` mode remains the preferred long-term architecture.
+The descriptor-bound native helper prevents the ordinary copy fallback while retaining Lidarr's native database/history pipeline. The workflow performs fresh proposal/configuration validation, rejects overlapping active commands, records one fresh command receipt, and requires exact per-file reconciliation. Because Lidarr can report command completion after a script failure, command status is never treated as proof. A native upstream `HardLink` mode remains the preferred long-term architecture.
 
 ## Compatibility limits
 

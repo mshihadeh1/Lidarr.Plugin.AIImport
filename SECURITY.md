@@ -13,8 +13,12 @@ Please report vulnerabilities privately through GitHub Security Advisories rathe
 
 ## Dependency boundary
 
-The release ZIP contains only this plugin DLL, its GPL license, and a corresponding-source notice. Lidarr host dependencies are compile-time project references and are not redistributed. CI reports inherited vulnerable packages from the pinned Lidarr source; remediation requires a separately verified Lidarr compatibility pin rather than silently replacing host assemblies.
+The release ZIP contains only this plugin DLL, the statically linked strict-hardlink helper, its GPL license, and a corresponding-source notice. Lidarr host dependencies are compile-time project references and are not redistributed. CI reports inherited vulnerable packages from the pinned Lidarr source; remediation requires a separately verified Lidarr compatibility pin rather than silently replacing host assemblies.
 
 ## Import safety
 
-The initial release cannot execute imports. This is intentional: the pinned Lidarr version's native hardlink path may fall back to copying. Any contribution enabling imports must demonstrate preflight refusal, native-import use, no replacement by default, and post-import device/inode verification.
+The v1 release candidate permits only explicit, authenticated, single-use approvals. It publishes owner-only immutable authorization records, invokes Lidarr's native manual-import pipeline, and intercepts `HardLinkOrCopy` with a descriptor-bound helper that either creates the authorized hardlink or fails without copy fallback. Destinations must remain beneath the approved artist root.
+
+Execution is not successful until the native result, source/destination device and inode, Lidarr history, enriched track-file state, and track binding all reconcile. Unknown outcomes are never retried automatically. Approval tokens expire for execution but remain recovery credentials for status and reconciliation; protect them in owner-only files or protected stdin.
+
+The exact supported host is Lidarr `3.1.2.4913`. Back up Lidarr, keep the service private, and complete a disposable one-album import plus torrent-client recheck before broader use.

@@ -13,7 +13,11 @@ public sealed class ImportSafetyServiceTests
     [Test]
     public void Ready_only_when_every_source_mutation_and_copy_fallback_guard_is_active()
     {
-        var service = new ImportSafetyService(new CompanionOptions { HardlinkScriptPath = ScriptPath });
+        var service = new ImportSafetyService(new CompanionOptions
+        {
+            HardlinkScriptPath = ScriptPath,
+            AuthorizationDeploymentConfirmed = true
+        });
         var configuration = new ImportSafetyConfiguration(
             CopyUsingHardlinks: true,
             UseScriptImport: true,
@@ -30,11 +34,26 @@ public sealed class ImportSafetyServiceTests
         Assert.Multiple(() =>
         {
             Assert.That(result.ConfigurationPrerequisitesSatisfied, Is.True);
-            Assert.That(result.ExecutionEnabled, Is.False);
+            Assert.That(result.ExecutionEnabled, Is.True);
             Assert.That(result.Blockers, Is.Empty);
-            Assert.That(result.Limitations, Has.Some.Contains("does not attest"));
-            Assert.That(result.Limitations, Has.Some.Contains("command completion"));
-            Assert.That(result.Limitations, Has.Some.Contains("TOCTOU"));
+            Assert.That(result.Limitations, Has.Some.Contains("pinned Lidarr"));
+            Assert.That(result.Limitations, Has.Some.Contains("per-file"));
+            Assert.That(result.Limitations, Has.Some.Contains("test one expendable album"));
+        });
+    }
+
+    [Test]
+    public void Shared_authorization_deployment_must_be_explicitly_confirmed()
+    {
+        var service = new ImportSafetyService(new CompanionOptions { HardlinkScriptPath = ScriptPath });
+        var configuration = new ImportSafetyConfiguration(true, true, ScriptPath, false, "none", false, "no", false, false);
+
+        var result = service.Assess(CompatibleStatus, configuration);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.ExecutionEnabled, Is.False);
+            Assert.That(result.Blockers, Has.Some.Contains("AUTHORIZATION_DEPLOYMENT_CONFIRMED"));
         });
     }
 

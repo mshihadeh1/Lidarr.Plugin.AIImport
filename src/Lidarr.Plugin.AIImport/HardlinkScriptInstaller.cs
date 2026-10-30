@@ -16,7 +16,6 @@ public static class HardlinkScriptInstaller
             File.SetUnixFileMode(
                 scriptPath,
                 UnixFileMode.UserRead |
-                UnixFileMode.UserWrite |
                 UnixFileMode.UserExecute |
                 UnixFileMode.GroupRead |
                 UnixFileMode.GroupExecute |

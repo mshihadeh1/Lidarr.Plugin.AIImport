@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Lidarr.AIImport.Companion.Lidarr;
+using Lidarr.AIImport.Companion.Llm;
 using Lidarr.AIImport.Companion.Matching;
 using Lidarr.AIImport.Companion.Models;
 
@@ -19,11 +20,16 @@ public sealed class FailedImportDiscoveryService : IFailedImportDiscoveryService
 
     private readonly ILidarrClient _lidarrClient;
     private readonly DeterministicMatcher _matcher;
+    private readonly ILlmMatchService? _llmMatchService;
 
-    public FailedImportDiscoveryService(ILidarrClient lidarrClient, DeterministicMatcher matcher)
+    public FailedImportDiscoveryService(
+        ILidarrClient lidarrClient,
+        DeterministicMatcher matcher,
+        ILlmMatchService? llmMatchService = null)
     {
         _lidarrClient = lidarrClient;
         _matcher = matcher;
+        _llmMatchService = llmMatchService;
     }
 
     public async Task<IReadOnlyList<AnalysisResult>> DiscoverAsync(CancellationToken cancellationToken)
@@ -78,6 +84,31 @@ public sealed class FailedImportDiscoveryService : IFailedImportDiscoveryService
 
         var deterministic = _matcher.Match(files, verifiedCandidates);
         var proposal = ToProposal(deterministic, verifiedCandidates);
+        var usedLlm = false;
+        if (deterministic.Status == DeterministicStatus.NeedsLlm && _llmMatchService is not null)
+        {
+            usedLlm = true;
+            try
+            {
+                proposal = await _llmMatchService.MatchAsync(
+                    files,
+                    verifiedCandidates,
+                    deterministic.RankedReleaseIds,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is ProposalValidationException or HttpRequestException or LlmProtocolException or TaskCanceledException)
+            {
+                proposal = new MatchProposal(
+                    1,
+                    ProposalStatus.ManualReview,
+                    null,
+                    null,
+                    null,
+                    0m,
+                    $"Local-model ranking failed safely: {exception.Message}",
+                    Array.Empty<TrackProposal>());
+            }
+        }
         try
         {
             proposal = StrictProposalValidator.Validate(proposal, files, verifiedCandidates);
@@ -94,15 +125,36 @@ public sealed class FailedImportDiscoveryService : IFailedImportDiscoveryService
                 $"Deterministic proposal failed strict validation: {exception.Message}",
                 Array.Empty<TrackProposal>());
         }
+        var missingAlbum = BuildMissingAlbumProposal(files, verifiedCandidates);
         return new AnalysisResult(
-            AnalysisId(item.DownloadId, files, verifiedCandidates),
+            AnalysisId(item.DownloadId, files, verifiedCandidates, proposal, missingAlbum),
             item.DownloadId,
             item.Title,
             proposal,
             files,
             verifiedCandidates,
-            UsedLlm: false,
-            DateTimeOffset.UtcNow);
+            UsedLlm: usedLlm,
+            DateTimeOffset.UtcNow,
+            missingAlbum);
+    }
+
+    private static MissingAlbumProposal? BuildMissingAlbumProposal(
+        IReadOnlyList<SourceFileCandidate> files,
+        IReadOnlyList<ReleaseCandidate> candidates)
+    {
+        if (candidates.Count != 0 || files.Count == 0) return null;
+        var artistIds = files.Select(x => x.ArtistMusicBrainzId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var albumIds = files.Select(x => x.AlbumMusicBrainzId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var releaseIds = files.Select(x => x.ReleaseMusicBrainzId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (artistIds.Length != 1 || albumIds.Length != 1 || releaseIds.Length != 1 ||
+            !Guid.TryParse(artistIds[0], out var artistId) || artistId == Guid.Empty ||
+            !Guid.TryParse(albumIds[0], out var albumId) || albumId == Guid.Empty ||
+            !Guid.TryParse(releaseIds[0], out var releaseId) || releaseId == Guid.Empty)
+            return null;
+        var artists = files.Select(x => x.Artist).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToArray();
+        var albums = files.Select(x => x.Album).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToArray();
+        if (artists.Length != 1 || albums.Length != 1) return null;
+        return new MissingAlbumProposal(artistId, albumId, releaseId, artists[0], albums[0]);
     }
 
     private static MatchProposal ToProposal(
@@ -140,7 +192,9 @@ public sealed class FailedImportDiscoveryService : IFailedImportDiscoveryService
     private static string AnalysisId(
         string downloadId,
         IReadOnlyList<SourceFileCandidate> files,
-        IReadOnlyList<ReleaseCandidate> candidates)
+        IReadOnlyList<ReleaseCandidate> candidates,
+        MatchProposal proposal,
+        MissingAlbumProposal? missingAlbum)
     {
         var snapshot = new
         {
@@ -156,6 +210,16 @@ public sealed class FailedImportDiscoveryService : IFailedImportDiscoveryService
                 TrackNumbers = x.TrackNumbers.OrderBy(number => number).ToArray(),
                 x.DurationMs,
                 x.TrackMusicBrainzId,
+                x.ArtistMusicBrainzId,
+                x.AlbumMusicBrainzId,
+                x.ReleaseMusicBrainzId,
+                x.RecordingMusicBrainzId,
+                x.SourcePath,
+                Quality = x.Quality?.ToJsonString(),
+                x.IndexerFlags,
+                x.DownloadId,
+                x.Size,
+                x.ManualImportId,
                 Rejections = x.Rejections.OrderBy(reason => reason, StringComparer.Ordinal).ToArray(),
                 x.ArtistId,
                 x.AlbumId
@@ -181,7 +245,24 @@ public sealed class FailedImportDiscoveryService : IFailedImportDiscoveryService
                     track.ForeignRecordingId,
                     track.HasFile
                 }).ToArray()
-            }).ToArray()
+            }).ToArray(),
+            Proposal = new
+            {
+                proposal.SchemaVersion,
+                proposal.Status,
+                proposal.ArtistId,
+                proposal.AlbumId,
+                proposal.ReleaseId,
+                proposal.Confidence,
+                proposal.Explanation,
+                Tracks = proposal.Tracks.OrderBy(x => x.SourceFileId, StringComparer.Ordinal).Select(x => new
+                {
+                    x.SourceFileId,
+                    x.TrackId,
+                    x.Confidence
+                }).ToArray()
+            },
+            MissingAlbum = missingAlbum
         };
         var hash = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(snapshot));
         return Convert.ToHexString(hash).ToLowerInvariant()[..24];

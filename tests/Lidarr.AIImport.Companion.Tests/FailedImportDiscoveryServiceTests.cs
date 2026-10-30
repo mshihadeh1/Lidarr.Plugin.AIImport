@@ -81,6 +81,60 @@ public sealed class FailedImportDiscoveryServiceTests
     }
 
     [Test]
+    public async Task Tagged_musicbrainz_ids_produce_a_missing_album_proposal_without_writing()
+    {
+        var tagged = Source("f1", albumId: null) with
+        {
+            ArtistMusicBrainzId = "11111111-1111-1111-1111-111111111111",
+            AlbumMusicBrainzId = "22222222-2222-2222-2222-222222222222",
+            ReleaseMusicBrainzId = "33333333-3333-3333-3333-333333333333"
+        };
+        var client = new FakeLidarrClient(
+            new[] { Queue(1, "importFailed", "failed", albumId: null) },
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>> { ["failed"] = new[] { tagged } },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>>());
+
+        var result = (await new FailedImportDiscoveryService(client, new DeterministicMatcher())
+            .DiscoverAsync(CancellationToken.None)).Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Proposal.Status, Is.EqualTo(ProposalStatus.ManualReview));
+            Assert.That(result.MissingAlbum, Is.Not.Null);
+            Assert.That(result.MissingAlbum!.ReleaseGroupMusicBrainzId,
+                Is.EqualTo(Guid.Parse("22222222-2222-2222-2222-222222222222")));
+            Assert.That(result.MissingAlbum.ReleaseMusicBrainzId,
+                Is.EqualTo(Guid.Parse("33333333-3333-3333-3333-333333333333")));
+        });
+    }
+
+    [Test]
+    public async Task Uses_llm_only_to_rank_verified_ambiguous_candidates()
+    {
+        var alternate = Release() with { Id = 102, ForeignReleaseId = "release-102" };
+        var client = new FakeLidarrClient(
+            new[] { Queue(1, "importFailed", "failed") },
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>>
+            {
+                ["failed"] = new[] { Source("source-1", albumId: 10) }
+            },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = new[] { Release(), alternate } });
+        var llm = new FakeLlmMatchService(new MatchProposal(
+            1, ProposalStatus.Proposed, 5, 10, 101, 0.95m, "Selected verified candidate",
+            new[] { new TrackProposal("source-1", 1001, 0.96m) }));
+
+        var result = (await new FailedImportDiscoveryService(client, new DeterministicMatcher(), llm)
+            .DiscoverAsync(CancellationToken.None)).Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.UsedLlm, Is.True);
+            Assert.That(result.Proposal.ReleaseId, Is.EqualTo(101));
+            Assert.That(llm.RankedReleaseIds, Is.EqualTo(new[] { 101, 102 }));
+        });
+    }
+
+    [Test]
     public async Task Analysis_id_changes_when_verified_candidate_state_changes()
     {
         FakeLidarrClient Client(bool hasFile) => new(
@@ -97,6 +151,29 @@ public sealed class FailedImportDiscoveryServiceTests
             .DiscoverAsync(CancellationToken.None)).Single();
 
         Assert.That(existing.AnalysisId, Is.Not.EqualTo(available.AnalysisId));
+    }
+
+    [Test]
+    public async Task Analysis_id_changes_when_llm_proposal_changes()
+    {
+        var alternate = Release() with { Id = 102, ForeignReleaseId = "release-102" };
+        var client = new FakeLidarrClient(
+            [Queue(1, "importFailed", "failed")],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>> { ["failed"] = [Source("source-1", 10)] },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release(), alternate] });
+        var first = new FakeLlmMatchService(new MatchProposal(
+            1, ProposalStatus.Proposed, 5, 10, 101, 0.95m, "first",
+            [new TrackProposal("source-1", 1001, 0.96m)]));
+        var second = new FakeLlmMatchService(new MatchProposal(
+            1, ProposalStatus.Proposed, 5, 10, 101, 0.94m, "second",
+            [new TrackProposal("source-1", 1001, 0.95m)]));
+
+        var firstResult = (await new FailedImportDiscoveryService(client, new DeterministicMatcher(), first)
+            .DiscoverAsync(CancellationToken.None)).Single();
+        var secondResult = (await new FailedImportDiscoveryService(client, new DeterministicMatcher(), second)
+            .DiscoverAsync(CancellationToken.None)).Single();
+
+        Assert.That(secondResult.AnalysisId, Is.Not.EqualTo(firstResult.AnalysisId));
     }
 
     [Test]
@@ -210,5 +287,20 @@ public sealed class FailedImportDiscoveryServiceTests
 
         public Task<ImportSafetyConfiguration> GetImportSafetyConfigurationAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new ImportSafetyConfiguration(true, true, "/script", false, "none", false, "no", false, false));
+    }
+
+    private sealed class FakeLlmMatchService(MatchProposal proposal) : ILlmMatchService
+    {
+        public IReadOnlyList<int> RankedReleaseIds { get; private set; } = Array.Empty<int>();
+
+        public Task<MatchProposal> MatchAsync(
+            IReadOnlyList<SourceFileCandidate> files,
+            IReadOnlyList<ReleaseCandidate> candidates,
+            IReadOnlyList<int> rankedReleaseIds,
+            CancellationToken cancellationToken)
+        {
+            RankedReleaseIds = rankedReleaseIds;
+            return Task.FromResult(proposal);
+        }
     }
 }

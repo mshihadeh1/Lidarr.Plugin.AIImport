@@ -85,6 +85,8 @@ public static class StrictProposalValidator
 
         if (proposal.ArtistId is null or <= 0 || proposal.AlbumId is null or <= 0 || proposal.ReleaseId is null or <= 0 || proposal.Tracks.Count == 0)
             throw new ProposalValidationException("proposed requires positive identifiers and mappings.");
+        if (files.Any(x => x.Rejections.Count != 0))
+            throw new ProposalValidationException("A source file has current Lidarr import rejections.");
         var release = releases.SingleOrDefault(x => x.Id == proposal.ReleaseId.Value)
             ?? throw new ProposalValidationException("releaseId was not supplied as a verified candidate.");
         if (release.AlbumId != proposal.AlbumId.Value) throw new ProposalValidationException("albumId does not own the selected release.");

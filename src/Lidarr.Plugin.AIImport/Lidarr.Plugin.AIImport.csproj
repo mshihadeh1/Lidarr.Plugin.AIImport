@@ -3,14 +3,16 @@
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>Lidarr.Plugin.AIImport</AssemblyName>
     <RootNamespace>Lidarr.Plugin.AIImport</RootNamespace>
-    <Version Condition="'$(Version)' == ''">0.1.0</Version>
-    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">0.1.0.0</AssemblyVersion>
+    <Version Condition="'$(Version)' == ''">1.0.0</Version>
+    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">1.0.0.0</AssemblyVersion>
     <FileVersion Condition="'$(FileVersion)' == ''">$(AssemblyVersion)</FileVersion>
     <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)</InformationalVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <AssemblyMetadata Include="NativeHelperSha256" Value="$(NativeHelperSha256)" />
+    <InternalsVisibleTo Include="Lidarr.Plugin.AIImport.Tests" />
     <ProjectReference Include="../../vendor/Lidarr/src/NzbDrone.Common/Lidarr.Common.csproj">
       <Private>false</Private>
       <ExcludeAssets>runtime</ExcludeAssets>
