@@ -3,8 +3,8 @@
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>Lidarr.Plugin.AIImport</AssemblyName>
     <RootNamespace>Lidarr.Plugin.AIImport</RootNamespace>
-    <Version Condition="'$(Version)' == ''">1.0.1</Version>
-    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">1.0.1.0</AssemblyVersion>
+    <Version Condition="'$(Version)' == ''">1.0.2</Version>
+    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">1.0.2.0</AssemblyVersion>
     <FileVersion Condition="'$(FileVersion)' == ''">$(AssemblyVersion)</FileVersion>
     <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)</InformationalVersion>
     <Nullable>enable</Nullable>
