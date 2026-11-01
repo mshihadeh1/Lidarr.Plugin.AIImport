@@ -1,4 +1,4 @@
-# Lidarr AI Import v1.0.1
+# Lidarr AI Import v1.0.2
 
 Standalone, approval-gated AI-assisted import matching for **Lidarr 3.1.2.4913**.
 
@@ -44,7 +44,7 @@ The plugin checks these settings again before authorization and command submissi
 
 ### From a GitHub release
 
-Install `Lidarr.Plugin.AIImport-v1.0.1.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
+Install `Lidarr.Plugin.AIImport-v1.0.2.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
 ### Manual installation
 
@@ -66,7 +66,7 @@ Install `Lidarr.Plugin.AIImport-v1.0.1.net8.0.zip` through Lidarr's plugin suppo
    ```
 
 3. Restart Lidarr.
-4. Confirm **System → Plugins** reports `AI Import` version `1.0.1.0`.
+4. Confirm **System → Plugins** reports `AI Import` version `1.0.2.0`.
 5. Configure the exact Media Management settings listed above and restart Lidarr once more.
 
 ## Configure the LLM endpoint

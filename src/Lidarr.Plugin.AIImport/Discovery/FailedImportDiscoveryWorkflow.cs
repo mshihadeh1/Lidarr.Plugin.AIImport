@@ -73,13 +73,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
     private AiImportAnalysisDto Analyze(QueueCandidate item, AiImportSettings settings)
     {
         var files = _gateway.GetManualImports(item.DownloadId);
-        var albumIds = files.Select(x => x.AlbumId)
-            .Append(item.AlbumId)
-            .Where(x => x is > 0)
-            .Select(x => x!.Value)
-            .Distinct()
-            .OrderBy(x => x)
-            .ToArray();
+        var albumIds = GetCandidateAlbumIds(files, item.AlbumId);
         var candidates = albumIds.SelectMany(_gateway.GetReleaseCandidates)
             .GroupBy(x => x.Id)
             .Select(x => x.First())
@@ -126,6 +120,17 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             safeCandidates,
             usedLlm);
     }
+
+    internal static int[] GetCandidateAlbumIds(
+        IReadOnlyList<SourceFileCandidate> files,
+        int? queueAlbumId) =>
+        files.Select(x => x.AlbumId)
+            .Append(queueAlbumId)
+            .Where(x => x is > 0)
+            .Select(x => x!.Value)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToArray();
 
     private static MatchProposal ToProposal(DeterministicResult result, IReadOnlyList<ReleaseCandidate> candidates)
     {

@@ -1,3 +1,4 @@
+using Lidarr.Plugin.AIImport.Approval;
 using Lidarr.Plugin.AIImport.Configuration;
 using Lidarr.Plugin.AIImport.Discovery;
 using Lidarr.Plugin.AIImport.Lidarr;
@@ -122,6 +123,27 @@ public sealed class StandaloneDiscoveryWorkflowTests
             Assert.That(persisted.Proposal with { Tracks = [] }, Is.EqualTo(analysis.Proposal with { Tracks = [] }));
             Assert.That(persisted.Proposal.Tracks, Is.EqualTo(analysis.Proposal.Tracks));
             Assert.That(File.ReadAllText(Path.Combine(temp.Path, "analyses.json")), Does.Not.Contain("secret"));
+        });
+    }
+
+    [Test]
+    public void Discovery_and_approval_use_the_queue_album_when_it_differs_from_the_selected_album()
+    {
+        var files = new[] { Source("source-1") };
+
+        var queue = new[]
+        {
+            new QueueCandidate(2, 30, "duplicate", TrackedImportState.ImportFailed, "download"),
+            new QueueCandidate(1, 20, "selected", TrackedImportState.ImportFailed, "download")
+        };
+
+        var discoveryAlbumIds = FailedImportDiscoveryWorkflow.GetCandidateAlbumIds(files, queue.OrderBy(x => x.Id).First().AlbumId);
+        var approvalAlbumIds = StandaloneApprovedPlanProvider.GetCandidateAlbumIds(files, queue);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(discoveryAlbumIds, Is.EqualTo(new[] { 10, 20 }));
+            Assert.That(approvalAlbumIds, Is.EqualTo(discoveryAlbumIds));
         });
     }
 

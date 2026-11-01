@@ -42,8 +42,10 @@ public sealed class StandaloneApprovedPlanProvider : IApprovedPlanProvider
         if (proposal.Status != ProposalStatus.Proposed || proposal.ArtistId is not > 0 ||
             proposal.AlbumId is not > 0 || proposal.ReleaseId is not > 0 || files.Count == 0)
             throw new InvalidOperationException("Only a complete, validated import proposal may be approved.");
-        var albumIds = files.Select(x => x.AlbumId).Append(proposal.AlbumId)
-            .Where(x => x is > 0).Select(x => x!.Value).Distinct().OrderBy(x => x).ToArray();
+        // Discovery includes the selected queue row's album in its analysis snapshot. Rebuild
+        // the exact same candidate scope here; using only file/proposal albums makes every
+        // approval stale when Lidarr's queue album differs from the selected release album.
+        var albumIds = GetCandidateAlbumIds(files, queueMatches);
         var releases = albumIds.SelectMany(_gateway.GetReleaseCandidates)
             .GroupBy(x => x.Id).Select(x => x.First()).OrderBy(x => x.Id).ToArray();
         StrictProposalValidator.Validate(proposal, files, releases);
@@ -78,5 +80,14 @@ public sealed class StandaloneApprovedPlanProvider : IApprovedPlanProvider
             proposal.ReleaseId.Value, _safety.CaptureFingerprint(), approved, destinationRoot);
         await _execution.RevalidateManualImportAsync(plan, cancellationToken).ConfigureAwait(false);
         return plan;
+    }
+
+    internal static int[] GetCandidateAlbumIds(
+        IReadOnlyList<SourceFileCandidate> files,
+        IReadOnlyList<QueueCandidate> queueMatches)
+    {
+        if (queueMatches.Count == 0) throw new ArgumentException("At least one matching queue row is required.", nameof(queueMatches));
+        var selectedQueueAlbumId = queueMatches.OrderBy(x => x.Id).First().AlbumId;
+        return FailedImportDiscoveryWorkflow.GetCandidateAlbumIds(files, selectedQueueAlbumId);
     }
 }
