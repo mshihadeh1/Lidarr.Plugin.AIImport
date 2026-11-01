@@ -112,7 +112,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             x.Tracks.Select(track => new ReleaseTrackDto(
                 track.Id, track.Title, track.DiscNumber, track.TrackNumber, track.DurationMs, track.HasFile)).ToArray())).ToArray();
         return new AiImportAnalysisDto(
-            ComputeAnalysisId(item.DownloadId, files, candidates, proposal),
+            ComputeAnalysisId(item.DownloadId, item.AlbumId, files, candidates, proposal),
             item.DownloadId,
             item.Title,
             proposal,
@@ -153,14 +153,16 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
 
     public static string ComputeAnalysisId(
         string downloadId,
+        int? queueAlbumId,
         IReadOnlyList<SourceFileCandidate> files,
         IReadOnlyList<ReleaseCandidate> candidates,
         MatchProposal proposal)
     {
         var snapshot = new
         {
-            version = 1,
+            version = 2,
             downloadId,
+            queueAlbumId,
             files = files.OrderBy(x => x.Id, StringComparer.Ordinal).Select(x => new
             {
                 x.Id, x.Artist, x.Album, x.Title, x.DiscNumber, x.TrackNumbers, x.DurationMs,

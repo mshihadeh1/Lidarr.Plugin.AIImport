@@ -1,0 +1,115 @@
+using System.Text.Json.Nodes;
+using Lidarr.Plugin.AIImport.Approval;
+using Lidarr.Plugin.AIImport.Configuration;
+using Lidarr.Plugin.AIImport.Discovery;
+using Lidarr.Plugin.AIImport.Filesystem;
+using Lidarr.Plugin.AIImport.Lidarr;
+using Lidarr.Plugin.AIImport.Llm;
+using Lidarr.Plugin.AIImport.Matching;
+using Lidarr.Plugin.AIImport.Workflows;
+
+namespace Lidarr.Plugin.AIImport.Tests;
+
+[TestFixture]
+public sealed class StandaloneApprovedPlanProviderTests
+{
+    [Test]
+    public async Task Fresh_discovery_with_different_queue_album_approves_and_real_candidate_change_is_stale()
+    {
+        using var temp = new TempDirectory();
+        var source = new SourceFileCandidate(
+            "source-1", "01 Song.flac", "Artist", "Album", "Song", 1, [1], 180000,
+            null, [], 5, 10)
+        {
+            SourcePath = "/downloads/Album/01 Song.flac",
+            Quality = JsonNode.Parse("{\"quality\":{\"id\":1}}")!.AsObject(),
+            DownloadId = "download",
+            Size = 123,
+            ManualImportId = 77
+        };
+        var selected = Release(10, 101, "selected");
+        var queueScoped = Release(20, 201, "queue-scoped");
+        var releases = new Dictionary<int, IReadOnlyList<ReleaseCandidate>>
+        {
+            [10] = [selected],
+            [20] = [queueScoped],
+            [30] = [selected, queueScoped]
+        };
+        var gateway = new MutableGateway(
+            [new QueueCandidate(1, 20, "failed", TrackedImportState.ImportFailed, "download")],
+            [source], releases);
+        var store = new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json"));
+        var proposal = new MatchProposal(
+            1, ProposalStatus.Proposed, 5, 10, 101, .98m, "reviewed",
+            [new TrackProposal("source-1", 1001, .99m)]);
+        var analysis = new FailedImportDiscoveryWorkflow(
+                gateway, new DeterministicMatcher(), new StubLlm(proposal), store)
+            .Discover(new AiImportSettings()).Analyses.Single();
+        var provider = new StandaloneApprovedPlanProvider(
+            store,
+            gateway,
+            new StubIdentityProvider(new FileIdentity(1, 2, 123, 4, 5, 6, 7, 420, 8, 9, 1)),
+            new StubExecutionClient(),
+            () => "safety-fingerprint");
+
+        var approved = await provider.BuildCurrentAsync(analysis.AnalysisId, CancellationToken.None);
+
+        Assert.That(approved.AnalysisId, Is.EqualTo(analysis.AnalysisId));
+        gateway.Queue = [new QueueCandidate(1, 30, "failed", TrackedImportState.ImportFailed, "download")];
+        Assert.ThrowsAsync<StaleApprovalException>(() =>
+            provider.BuildCurrentAsync(analysis.AnalysisId, CancellationToken.None));
+
+        gateway.Queue = [new QueueCandidate(1, 20, "failed", TrackedImportState.ImportFailed, "download")];
+        releases[20] = [queueScoped, Release(20, 202, "new-current-candidate")];
+        Assert.ThrowsAsync<StaleApprovalException>(() =>
+            provider.BuildCurrentAsync(analysis.AnalysisId, CancellationToken.None));
+    }
+
+    private static ReleaseCandidate Release(int albumId, int releaseId, string foreignId) =>
+        new(albumId, releaseId, "Artist", "Album", foreignId, "Album", string.Empty,
+            [new TrackCandidate(releaseId == 101 ? 1001 : releaseId * 10, "Song", 1, "1", 180000, null, null, false)], 5);
+
+    private sealed class MutableGateway(
+        IReadOnlyList<QueueCandidate> queue,
+        IReadOnlyList<SourceFileCandidate> files,
+        IReadOnlyDictionary<int, IReadOnlyList<ReleaseCandidate>> releases) : IInProcessLidarrGateway
+    {
+        public IReadOnlyList<QueueCandidate> Queue { get; set; } = queue;
+        public string Version => FailedImportDiscoveryWorkflow.CompatibleLidarrVersion;
+        public IReadOnlyList<QueueCandidate> GetTrackedDownloads() => Queue;
+        public IReadOnlyList<SourceFileCandidate> GetManualImports(string downloadId) => files;
+        public IReadOnlyList<ReleaseCandidate> GetReleaseCandidates(int albumId) =>
+            releases.TryGetValue(albumId, out var value) ? value : [];
+    }
+
+    private sealed class StubLlm(MatchProposal proposal) : ILlmMatchService
+    {
+        public MatchProposal Match(
+            AiImportSettings settings,
+            IReadOnlyList<SourceFileCandidate> files,
+            IReadOnlyList<ReleaseCandidate> candidates,
+            IReadOnlyList<int> rankedReleaseIds) => proposal;
+    }
+
+    private sealed class StubIdentityProvider(FileIdentity identity) : IFileIdentityProvider
+    {
+        public Task<FileIdentity> InspectAsync(string path, CancellationToken cancellationToken) => Task.FromResult(identity);
+    }
+
+    private sealed class StubExecutionClient : ILidarrExecutionClient
+    {
+        public Task<string> GetArtistPathAsync(int artistId, CancellationToken cancellationToken) =>
+            Task.FromResult("/music/Artist");
+        public Task RevalidateManualImportAsync(ApprovedImportPlan plan, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+        public Task<LidarrCommandReceipt> SubmitManualImportAsync(ApprovedImportPlan plan, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class TempDirectory : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ai-import-plan-" + Guid.NewGuid().ToString("N"));
+        public TempDirectory() => Directory.CreateDirectory(Path);
+        public void Dispose() => Directory.Delete(Path, true);
+    }
+}

@@ -12,7 +12,7 @@ public sealed class StandaloneApprovedPlanProvider : IApprovedPlanProvider
     private readonly IInProcessLidarrGateway _gateway;
     private readonly IFileIdentityProvider _identities;
     private readonly ILidarrExecutionClient _execution;
-    private readonly InProcessImportSafety _safety;
+    private readonly Func<string> _captureSafetyFingerprint;
 
     public StandaloneApprovedPlanProvider(
         StandaloneAnalysisStore analyses,
@@ -20,12 +20,22 @@ public sealed class StandaloneApprovedPlanProvider : IApprovedPlanProvider
         IFileIdentityProvider identities,
         ILidarrExecutionClient execution,
         InProcessImportSafety safety)
+        : this(analyses, gateway, identities, execution, safety.CaptureFingerprint)
+    {
+    }
+
+    internal StandaloneApprovedPlanProvider(
+        StandaloneAnalysisStore analyses,
+        IInProcessLidarrGateway gateway,
+        IFileIdentityProvider identities,
+        ILidarrExecutionClient execution,
+        Func<string> captureSafetyFingerprint)
     {
         _analyses = analyses;
         _gateway = gateway;
         _identities = identities;
         _execution = execution;
-        _safety = safety;
+        _captureSafetyFingerprint = captureSafetyFingerprint;
     }
 
     public async Task<ApprovedImportPlan> BuildCurrentAsync(string analysisId, CancellationToken cancellationToken)
@@ -45,11 +55,13 @@ public sealed class StandaloneApprovedPlanProvider : IApprovedPlanProvider
         // Discovery includes the selected queue row's album in its analysis snapshot. Rebuild
         // the exact same candidate scope here; using only file/proposal albums makes every
         // approval stale when Lidarr's queue album differs from the selected release album.
-        var albumIds = GetCandidateAlbumIds(files, queueMatches);
+        var selectedQueueAlbumId = GetSelectedQueueAlbumId(queueMatches);
+        var albumIds = FailedImportDiscoveryWorkflow.GetCandidateAlbumIds(files, selectedQueueAlbumId);
         var releases = albumIds.SelectMany(_gateway.GetReleaseCandidates)
             .GroupBy(x => x.Id).Select(x => x.First()).OrderBy(x => x.Id).ToArray();
         StrictProposalValidator.Validate(proposal, files, releases);
-        var currentAnalysisId = FailedImportDiscoveryWorkflow.ComputeAnalysisId(stored.DownloadId, files, releases, proposal);
+        var currentAnalysisId = FailedImportDiscoveryWorkflow.ComputeAnalysisId(
+            stored.DownloadId, selectedQueueAlbumId, files, releases, proposal);
         if (!string.Equals(currentAnalysisId, analysisId, StringComparison.Ordinal))
             throw new StaleApprovalException("The analysis no longer matches current Lidarr or source state.");
 
@@ -77,7 +89,7 @@ public sealed class StandaloneApprovedPlanProvider : IApprovedPlanProvider
             throw new InvalidDataException("Lidarr artist path must be an absolute path without a trailing separator.");
         var plan = new ApprovedImportPlan(
             analysisId, stored.DownloadId, proposal.ArtistId.Value, proposal.AlbumId.Value,
-            proposal.ReleaseId.Value, _safety.CaptureFingerprint(), approved, destinationRoot);
+            proposal.ReleaseId.Value, _captureSafetyFingerprint(), approved, destinationRoot);
         await _execution.RevalidateManualImportAsync(plan, cancellationToken).ConfigureAwait(false);
         return plan;
     }
@@ -87,7 +99,9 @@ public sealed class StandaloneApprovedPlanProvider : IApprovedPlanProvider
         IReadOnlyList<QueueCandidate> queueMatches)
     {
         if (queueMatches.Count == 0) throw new ArgumentException("At least one matching queue row is required.", nameof(queueMatches));
-        var selectedQueueAlbumId = queueMatches.OrderBy(x => x.Id).First().AlbumId;
-        return FailedImportDiscoveryWorkflow.GetCandidateAlbumIds(files, selectedQueueAlbumId);
+        return FailedImportDiscoveryWorkflow.GetCandidateAlbumIds(files, GetSelectedQueueAlbumId(queueMatches));
     }
+
+    private static int? GetSelectedQueueAlbumId(IReadOnlyList<QueueCandidate> queueMatches) =>
+        queueMatches.OrderBy(x => x.Id).First().AlbumId;
 }
