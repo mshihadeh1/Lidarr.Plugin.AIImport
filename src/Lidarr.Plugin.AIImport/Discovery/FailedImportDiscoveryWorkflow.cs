@@ -111,6 +111,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             x.AlbumId, x.Id, x.ArtistId, x.Artist, x.Title, x.ForeignReleaseId,
             x.Tracks.Select(track => new ReleaseTrackDto(
                 track.Id, track.Title, track.DiscNumber, track.TrackNumber, track.DurationMs, track.HasFile)).ToArray())).ToArray();
+        var libraryAddition = candidates.Length == 0 ? GetLibraryAddition(files) : null;
         return new AiImportAnalysisDto(
             ComputeAnalysisId(item.DownloadId, item.AlbumId, files, candidates, proposal),
             item.DownloadId,
@@ -118,7 +119,25 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             proposal,
             safeFiles,
             safeCandidates,
-            usedLlm);
+            usedLlm,
+            libraryAddition);
+    }
+
+    internal static LibraryAdditionDto? GetLibraryAddition(IReadOnlyList<SourceFileCandidate> files)
+    {
+        if (files.Count == 0) return null;
+        var artistIds = files.Select(x => x.ArtistMusicBrainzId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var albumIds = files.Select(x => x.AlbumMusicBrainzId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var releaseIds = files.Select(x => x.ReleaseMusicBrainzId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (artistIds.Length != 1 || albumIds.Length != 1 || releaseIds.Length != 1 ||
+            !Guid.TryParse(artistIds[0], out var artistId) || !Guid.TryParse(albumIds[0], out var albumId) ||
+            !Guid.TryParse(releaseIds[0], out var releaseId) || artistId == Guid.Empty || albumId == Guid.Empty ||
+            releaseId == Guid.Empty) return null;
+        if (files.Any(x => string.IsNullOrWhiteSpace(x.Artist) || string.IsNullOrWhiteSpace(x.Album))) return null;
+        var artists = files.Select(x => x.Artist.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var albums = files.Select(x => x.Album.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (artists.Length != 1 || albums.Length != 1) return null;
+        return new LibraryAdditionDto(artistId.ToString(), albumId.ToString(), releaseId.ToString(), artists[0], albums[0]);
     }
 
     internal static int[] GetCandidateAlbumIds(
@@ -160,13 +179,15 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
     {
         var snapshot = new
         {
-            version = 2,
+            version = 3,
             downloadId,
             queueAlbumId,
             files = files.OrderBy(x => x.Id, StringComparer.Ordinal).Select(x => new
             {
                 x.Id, x.Artist, x.Album, x.Title, x.DiscNumber, x.TrackNumbers, x.DurationMs,
-                x.TrackMusicBrainzId, x.ArtistId, x.AlbumId, x.SourcePath,
+                x.TrackMusicBrainzId, x.ArtistMusicBrainzId, x.AlbumMusicBrainzId,
+                x.ReleaseMusicBrainzId, x.RecordingMusicBrainzId,
+                x.ArtistId, x.AlbumId, x.SourcePath,
                 rejections = x.Rejections.OrderBy(value => value, StringComparer.Ordinal)
             }),
             candidates = candidates.OrderBy(x => x.Id),

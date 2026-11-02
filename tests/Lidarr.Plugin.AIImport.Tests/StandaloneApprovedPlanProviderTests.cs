@@ -54,7 +54,12 @@ public sealed class StandaloneApprovedPlanProviderTests
 
         var approved = await provider.BuildCurrentAsync(analysis.AnalysisId, CancellationToken.None);
 
-        Assert.That(approved.AnalysisId, Is.EqualTo(analysis.AnalysisId));
+        Assert.Multiple(() =>
+        {
+            Assert.That(approved.AnalysisId, Is.EqualTo(analysis.AnalysisId));
+            Assert.That(approved.HumanOverride, Is.False);
+            Assert.That(approved.ParentAnalysisId, Is.Null);
+        });
         gateway.Queue = [new QueueCandidate(1, 30, "failed", TrackedImportState.ImportFailed, "download")];
         Assert.ThrowsAsync<StaleApprovalException>(() =>
             provider.BuildCurrentAsync(analysis.AnalysisId, CancellationToken.None));

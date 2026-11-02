@@ -1,4 +1,5 @@
 using FluentValidation.Results;
+using System.Globalization;
 using Lidarr.Plugin.AIImport.Llm;
 using Lidarr.Plugin.AIImport.Workflows;
 using NzbDrone.Core.Notifications;
@@ -67,7 +68,7 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
         if (action == "getOAuthToken")
             return new Dictionary<string, string>();
 
-        var allowed = action is "discover" or "approve" or "execute" or "reconcile" or "status";
+        var allowed = action is "discover" or "add-library" or "manual-map" or "approve" or "execute" or "reconcile" or "status";
         if (!allowed)
         {
             throw new ArgumentException("Unknown AI Import action.", nameof(action));
@@ -86,6 +87,13 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
             throw new InvalidOperationException("Standalone approval and execution services are unavailable.");
         return action switch
         {
+            "add-library" => _standaloneWorkflow.AddLibraryEntities(
+                RequiredQuery(query, "analysisId"), RequiredPositiveInt(query, "rootFolderId"),
+                RequiredPositiveInt(query, "qualityProfileId"), RequiredPositiveInt(query, "metadataProfileId"),
+                RequiredQuery(query, "libraryConfirmation")),
+            "manual-map" => _standaloneWorkflow.CreateManualMapping(
+                RequiredQuery(query, "analysisId"), RequiredPositiveInt(query, "releaseId"),
+                RequiredQuery(query, "mappings"), RequiredQuery(query, "reviewConfirmation")),
             "approve" => _standaloneWorkflow.Approve(RequiredQuery(query, "analysisId")),
             "execute" => _standaloneWorkflow.Execute(
                 RequiredQuery(query, "approvalId"), RequiredQuery(query, "executeConfirmation")),
@@ -113,6 +121,11 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
         query.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value)
             ? value
             : throw new ArgumentException($"The {name} query value is required.", nameof(query));
+
+    private static int RequiredPositiveInt(IDictionary<string, string> query, string name) =>
+        int.TryParse(RequiredQuery(query, name), NumberStyles.None, CultureInfo.InvariantCulture, out var value) && value > 0
+            ? value
+            : throw new ArgumentException($"The {name} query value must be a positive integer.", nameof(query));
 
     private static string Sanitize(string message, string apiKey)
     {

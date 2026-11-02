@@ -88,6 +88,13 @@ public sealed record ReleaseTrackDto(
     int DurationMs,
     bool HasFile);
 
+public sealed record LibraryAdditionDto(
+    string ArtistMusicBrainzId,
+    string AlbumMusicBrainzId,
+    string ReleaseMusicBrainzId,
+    string Artist,
+    string Album);
+
 public sealed record AiImportAnalysisDto(
     string AnalysisId,
     string DownloadId,
@@ -95,4 +102,5 @@ public sealed record AiImportAnalysisDto(
     MatchProposal Proposal,
     IReadOnlyList<SourceFileDto> Files,
     IReadOnlyList<ReleaseCandidateDto> Candidates,
-    bool UsedLlm);
+    bool UsedLlm,
+    LibraryAdditionDto? LibraryAddition = null);

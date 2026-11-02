@@ -149,6 +149,166 @@
     container.className = `statusline ${kind}`;
   }
 
+  function renderLibraryAddition(analysis, card) {
+    const addition = analysis.libraryAddition;
+    if (!addition) return false;
+    const review = element('div', null, 'review');
+    review.appendChild(element('p', `The source tags identify MusicBrainz artist ${addition.artist} (${addition.artistMusicBrainzId}), release group ${addition.album} (${addition.albumMusicBrainzId}), and release ${addition.releaseMusicBrainzId}.`));
+    review.appendChild(element('p', 'This is a separate library mutation. Lidarr will resolve both identities from MusicBrainz, add only this artist and album, and perform no file import until you rediscover, review, approve, and execute.', 'muted'));
+    const root = document.createElement('select');
+    const quality = document.createElement('select');
+    const metadata = document.createElement('select');
+    [[root, 'Select a root folder…'], [quality, 'Select a quality profile…'], [metadata, 'Select a metadata profile…']].forEach(([select, text]) => {
+      const option = document.createElement('option'); option.value = ''; option.textContent = text; select.appendChild(option);
+    });
+    [['Root folder', root], ['Quality profile', quality], ['Metadata profile', metadata]].forEach(([label, select]) => {
+      const row = element('label', `${label}: `); row.appendChild(select); review.appendChild(row);
+    });
+    const acknowledgeLabel = element('label');
+    const acknowledge = document.createElement('input'); acknowledge.type = 'checkbox';
+    acknowledgeLabel.appendChild(acknowledge);
+    acknowledgeLabel.appendChild(document.createTextNode(' I verified the tagged MusicBrainz artist and album identities and approve adding them to Lidarr.'));
+    review.appendChild(acknowledgeLabel);
+    const add = element('button', 'Add verified artist and album'); add.disabled = true;
+    const statusLine = element('div', 'Loading Lidarr folders and profiles…', 'statusline muted');
+    review.appendChild(add); review.appendChild(statusLine); card.appendChild(review);
+    let loaded = false;
+    function updateEnabled() { add.disabled = !(loaded && acknowledge.checked && root.value && quality.value && metadata.value); }
+    acknowledge.addEventListener('change', updateEnabled);
+    Promise.all([api('/rootfolder'), api('/qualityprofile'), api('/metadataprofile')]).then(([roots, qualities, metadataProfiles]) => {
+      roots.filter(value => value.accessible !== false).forEach(value => { const option = document.createElement('option'); option.value = String(value.id); option.textContent = value.path; root.appendChild(option); });
+      qualities.forEach(value => { const option = document.createElement('option'); option.value = String(value.id); option.textContent = value.name; quality.appendChild(option); });
+      metadataProfiles.forEach(value => { const option = document.createElement('option'); option.value = String(value.id); option.textContent = value.name; metadata.appendChild(option); });
+      loaded = root.options.length > 1 && quality.options.length > 1 && metadata.options.length > 1;
+      setCardStatus(statusLine, loaded ? 'Select the destination settings and confirm the MusicBrainz identities.' : 'Lidarr has no usable root folder or profile.', loaded ? '' : 'error');
+      updateEnabled();
+    }).catch(error => setCardStatus(statusLine, `Unable to load Lidarr destination settings: ${error.message}`, 'error'));
+    add.addEventListener('click', async () => {
+      add.disabled = true; acknowledge.disabled = true; root.disabled = true; quality.disabled = true; metadata.disabled = true;
+      setCardStatus(statusLine, 'Resolving and adding the exact MusicBrainz artist and album…');
+      try {
+        const created = await action('add-library', {
+          analysisId: analysis.analysisId,
+          rootFolderId: root.value,
+          qualityProfileId: quality.value,
+          metadataProfileId: metadata.value,
+          libraryConfirmation: 'ADD'
+        });
+        if (created.state === 'partial') {
+          setCardStatus(statusLine, `${created.outcome} No file import occurred. Run Discover to reconcile current Lidarr state before any retry.`, 'error');
+        } else {
+          setCardStatus(statusLine, `Verified Lidarr artist ${created.artistId}, album ${created.albumId}, and release ${created.releaseId}. Run Discover again before mapping or approval.`, 'success');
+        }
+      } catch (error) {
+        setCardStatus(statusLine, `Library addition stopped before a verified completion: ${error.message}. Run Discover before retrying because Lidarr service failures can be non-transactional.`, 'error');
+        acknowledge.disabled = false; root.disabled = false; quality.disabled = false; metadata.disabled = false; updateEnabled();
+      }
+    });
+    return true;
+  }
+
+  function renderManualMapping(analysis, card) {
+    const candidates = (analysis.candidates || []).filter(candidate =>
+      candidate.artistId > 0 && (candidate.tracks || []).some(track => !track.hasFile));
+    if (!(analysis.files || []).length || !candidates.length) return false;
+
+    const review = element('div', null, 'review');
+    review.appendChild(element('p', 'Manual override: choose one verified Lidarr release and map every source file to a unique available track. Confidence is intentionally 0%; your explicit review—not the model—creates the proposal.'));
+    const releaseSelect = document.createElement('select');
+    const releaseBlank = document.createElement('option');
+    releaseBlank.value = ''; releaseBlank.textContent = 'Select a verified release…'; releaseSelect.appendChild(releaseBlank);
+    candidates.forEach(candidate => {
+      const option = document.createElement('option');
+      option.value = String(candidate.releaseId);
+      option.textContent = `${candidate.artist} — ${candidate.title} (release ${candidate.releaseId})`;
+      releaseSelect.appendChild(option);
+    });
+    review.appendChild(releaseSelect);
+    const mappingHost = element('div');
+    review.appendChild(mappingHost);
+    const acknowledgeLabel = element('label');
+    const acknowledge = document.createElement('input'); acknowledge.type = 'checkbox';
+    acknowledgeLabel.appendChild(acknowledge);
+    acknowledgeLabel.appendChild(document.createTextNode(' I manually verified every selected source-to-track mapping and want to create a separate reviewable proposal.'));
+    review.appendChild(acknowledgeLabel);
+    const create = element('button', 'Create manually reviewed proposal'); create.disabled = true;
+    const statusLine = element('div', '', 'statusline');
+    review.appendChild(create); review.appendChild(statusLine);
+    card.appendChild(review);
+    let selectors = [];
+
+    function selectedCandidate() {
+      return candidates.find(candidate => String(candidate.releaseId) === releaseSelect.value);
+    }
+    function mappingsValid() {
+      const values = selectors.map(item => Number(item.select.value));
+      return acknowledge.checked && values.every(value => Number.isInteger(value) && value > 0) && new Set(values).size === values.length;
+    }
+    function updateEnabled() { create.disabled = !mappingsValid(); }
+    function rebuildMappings() {
+      mappingHost.replaceChildren(); selectors = [];
+      const candidate = selectedCandidate();
+      if (!candidate) { updateEnabled(); return; }
+      const tracks = (candidate.tracks || []).filter(track => !track.hasFile);
+      const table = element('table');
+      const head = element('thead'); const hr = element('tr');
+      ['Source file', 'Verified Lidarr target'].forEach(value => hr.appendChild(element('th', value)));
+      head.appendChild(hr); table.appendChild(head);
+      const body = element('tbody');
+      (analysis.files || []).forEach(source => {
+        const row = element('tr'); row.appendChild(element('td', source.name));
+        const cell = element('td'); const select = document.createElement('select');
+        const blank = document.createElement('option'); blank.value = ''; blank.textContent = 'Select a track…'; select.appendChild(blank);
+        tracks.forEach(track => {
+          const option = document.createElement('option'); option.value = String(track.trackId);
+          option.textContent = `Disc ${track.discNumber}, Track ${track.trackNumber}: ${track.title}`;
+          select.appendChild(option);
+        });
+        select.addEventListener('change', updateEnabled);
+        cell.appendChild(select); row.appendChild(cell); body.appendChild(row);
+        selectors.push({sourceFileId: source.id, select});
+      });
+      table.appendChild(body); mappingHost.appendChild(table); updateEnabled();
+    }
+    releaseSelect.addEventListener('change', rebuildMappings);
+    acknowledge.addEventListener('change', updateEnabled);
+    rebuildMappings();
+    create.addEventListener('click', async () => {
+      create.disabled = true; acknowledge.disabled = true; releaseSelect.disabled = true;
+      selectors.forEach(item => { item.select.disabled = true; });
+      setCardStatus(statusLine, 'Validating manual mapping against current Lidarr state…');
+      try {
+        const candidate = selectedCandidate();
+        const mappings = selectors.map(item => ({sourceFileId: item.sourceFileId, trackId: Number(item.select.value)}));
+        const mappingsJson = JSON.stringify(mappings);
+        if (mappings.length > 50 || mappingsJson.length > 4096 || encodeURIComponent(mappingsJson).length > 6000)
+          throw new Error('This review exceeds the safe GUI request size. Split the download into smaller albums and rediscover.');
+        const created = await action('manual-map', {
+          analysisId: analysis.analysisId,
+          releaseId: candidate.releaseId,
+          mappings: mappingsJson,
+          reviewConfirmation: 'REVIEW'
+        });
+        const mapped = Object.assign({}, analysis, {
+          analysisId: created.analysisId,
+          proposal: {
+            schemaVersion: 1, status: 'proposed', artistId: candidate.artistId,
+            albumId: candidate.albumId, releaseId: candidate.releaseId, confidence: 0,
+            explanation: 'Explicit human-reviewed source-to-track mapping.',
+            tracks: mappings.map(mapping => Object.assign({confidence: 0}, mapping))
+          },
+          usedLlm: false
+        });
+        card.replaceWith(renderAnalysis(mapped));
+      } catch (error) {
+        setCardStatus(statusLine, `Manual mapping failed: ${error.message}`, 'error');
+        acknowledge.disabled = false; releaseSelect.disabled = false;
+        selectors.forEach(item => { item.select.disabled = false; }); updateEnabled();
+      }
+    });
+    return true;
+  }
+
   function renderAnalysis(analysis) {
     const proposed = analysis.proposal && analysis.proposal.status === 'proposed' && hasCompleteUniqueMapping(analysis);
     const card = element('article', null, `card${proposed ? ' proposed' : ''}`);
@@ -165,7 +325,9 @@
       const list = element('ul', null, 'candidate-list');
       (analysis.candidates || []).forEach(c => list.appendChild(element('li', `${c.artist} — ${c.title} (release ${c.releaseId})`)));
       if (list.children.length) card.appendChild(list);
-      card.appendChild(element('p', 'This result cannot be approved. Resolve the explanation in Lidarr or the download and discover again.', 'muted'));
+      if (!renderLibraryAddition(analysis, card) && !renderManualMapping(analysis, card)) {
+        card.appendChild(element('p', 'No complete verified Lidarr candidate or exact tagged MusicBrainz identity is available. Fix the source metadata or Lidarr match, then discover again.', 'muted'));
+      }
       return card;
     }
 

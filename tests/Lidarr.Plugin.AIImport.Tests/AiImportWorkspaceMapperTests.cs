@@ -40,6 +40,10 @@ public sealed class AiImportWorkspaceMapperTests
             Assert.That(html, Does.Contain("function hasCompleteUniqueMapping"));
             Assert.That(html, Does.Contain("const proposed = analysis.proposal && analysis.proposal.status === 'proposed' && hasCompleteUniqueMapping(analysis);"));
             Assert.That(html, Does.Contain("I reviewed every source-to-track mapping"));
+            Assert.That(html, Does.Contain("Create manually reviewed proposal"));
+            Assert.That(html, Does.Contain("Manual override: choose one verified Lidarr release"));
+            Assert.That(html, Does.Contain("Add verified artist and album"));
+            Assert.That(html, Does.Contain("perform no file import until you rediscover"));
             Assert.That(html, Does.Contain("Type IMPORT to enable execution"));
             Assert.That(html, Does.Contain("function safeActionResult"));
             Assert.That(html, Does.Contain("commandStatus: value.commandStatus"));

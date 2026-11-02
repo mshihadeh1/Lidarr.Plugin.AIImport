@@ -5,6 +5,9 @@ namespace Lidarr.Plugin.AIImport.Workflows;
 
 public interface IStandaloneAiImportWorkflow
 {
+    LibraryAdditionCreatedDto AddLibraryEntities(
+        string analysisId, int rootFolderId, int qualityProfileId, int metadataProfileId, string confirmation);
+    ManualMappingCreatedDto CreateManualMapping(string analysisId, int releaseId, string mappingsJson, string confirmation);
     ApprovalCreatedDto Approve(string analysisId);
     ImportExecutionStarted Execute(string approvalId, string confirmation);
     ImportReconciliationResult Reconcile(string approvalId);
@@ -28,20 +31,35 @@ public sealed class StandaloneAiImportWorkflow : IStandaloneAiImportWorkflow
     private readonly ApprovalStore _store;
     private readonly ImportExecutionService _execution;
     private readonly ImportReconciliationCoordinator _reconciliation;
+    private readonly ManualMappingService _manualMapping;
+    private readonly LibraryAdditionService _libraryAddition;
 
 
     public StandaloneAiImportWorkflow(
         ApprovalService approval,
         ApprovalStore store,
         ImportExecutionService execution,
-        ImportReconciliationCoordinator reconciliation)
+        ImportReconciliationCoordinator reconciliation,
+        ManualMappingService manualMapping,
+        LibraryAdditionService libraryAddition)
     {
         _approval = approval;
         _store = store;
         _execution = execution;
         _reconciliation = reconciliation;
+        _manualMapping = manualMapping;
+        _libraryAddition = libraryAddition;
         _store.RecoverInterruptedExecutionsAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
+
+    public ManualMappingCreatedDto CreateManualMapping(string analysisId, int releaseId, string mappingsJson, string confirmation) =>
+        _manualMapping.Create(Required(analysisId, nameof(analysisId)), releaseId,
+            Required(mappingsJson, nameof(mappingsJson)), Required(confirmation, nameof(confirmation)));
+
+    public LibraryAdditionCreatedDto AddLibraryEntities(
+        string analysisId, int rootFolderId, int qualityProfileId, int metadataProfileId, string confirmation) =>
+        _libraryAddition.Add(Required(analysisId, nameof(analysisId)), rootFolderId,
+            qualityProfileId, metadataProfileId, Required(confirmation, nameof(confirmation)));
 
     public ApprovalCreatedDto Approve(string analysisId)
     {
