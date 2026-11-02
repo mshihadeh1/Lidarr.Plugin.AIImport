@@ -89,7 +89,8 @@ public sealed class StandaloneApprovedPlanProvider : IApprovedPlanProvider
             throw new InvalidDataException("Lidarr artist path must be an absolute path without a trailing separator.");
         var plan = new ApprovedImportPlan(
             analysisId, stored.DownloadId, proposal.ArtistId.Value, proposal.AlbumId.Value,
-            proposal.ReleaseId.Value, _captureSafetyFingerprint(), approved, destinationRoot);
+            proposal.ReleaseId.Value, _captureSafetyFingerprint(), approved, destinationRoot,
+            stored.HumanOverride, stored.ParentAnalysisId);
         await _execution.RevalidateManualImportAsync(plan, cancellationToken).ConfigureAwait(false);
         return plan;
     }

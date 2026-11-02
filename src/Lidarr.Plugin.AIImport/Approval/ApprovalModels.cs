@@ -22,7 +22,9 @@ public sealed record ApprovedImportPlan(
     int ReleaseId,
     string SafetyFingerprint,
     IReadOnlyList<ApprovedImportFile> Files,
-    string DestinationRoot = "");
+    string DestinationRoot = "",
+    bool HumanOverride = false,
+    string? ParentAnalysisId = null);
 
 public interface IApprovedPlanProvider
 {

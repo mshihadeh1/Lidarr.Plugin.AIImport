@@ -32,6 +32,7 @@ public sealed class StandaloneCompositionTests
     {
         Assert.That(typeof(IApprovedPlanProvider).IsAssignableFrom(typeof(StandaloneApprovedPlanProvider)), Is.True);
         Assert.That(typeof(ILidarrExecutionClient).IsAssignableFrom(typeof(DirectLidarrExecutionClient)), Is.True);
+        Assert.That(typeof(ILibraryAdditionClient).IsAssignableFrom(typeof(DirectLibraryAdditionClient)), Is.True);
         Assert.That(typeof(ILidarrReconciliationClient).IsAssignableFrom(typeof(DirectLidarrReconciliationClient)), Is.True);
         Assert.That(typeof(IStandaloneAiImportWorkflow).IsAssignableFrom(typeof(StandaloneAiImportWorkflow)), Is.True);
 

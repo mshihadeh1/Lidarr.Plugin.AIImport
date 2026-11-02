@@ -96,6 +96,15 @@ public sealed class AiImportConnectorTests
             Definition = Definition(Settings())
         };
 
+        connector.RequestAction("add-library", new Dictionary<string, string>
+        {
+            ["analysisId"] = "analysis-1", ["rootFolderId"] = "2",
+            ["qualityProfileId"] = "3", ["metadataProfileId"] = "4", ["libraryConfirmation"] = "ADD"
+        });
+        connector.RequestAction("manual-map", new Dictionary<string, string>
+        {
+            ["analysisId"] = "analysis-1", ["releaseId"] = "101", ["mappings"] = "[]", ["reviewConfirmation"] = "REVIEW"
+        });
         connector.RequestAction("approve", new Dictionary<string, string> { ["analysisId"] = "analysis-1" });
         var execute = Credentials();
         execute["executeConfirmation"] = "IMPORT";
@@ -106,7 +115,7 @@ public sealed class AiImportConnectorTests
         Assert.Multiple(() =>
         {
             Assert.That(standalone.AnalysisId, Is.EqualTo("analysis-1"));
-            Assert.That(standalone.Calls, Is.EqualTo(new[] { "approve", "execute", "reconcile", "status" }));
+            Assert.That(standalone.Calls, Is.EqualTo(new[] { "add-library", "manual-map", "approve", "execute", "reconcile", "status" }));
             Assert.That(standalone.ApprovalIds, Has.All.EqualTo("approval-1"));
             Assert.That(standalone.ApprovalIds, Has.Count.EqualTo(3));
         });
@@ -263,6 +272,18 @@ public sealed class AiImportConnectorTests
         public List<string> Calls { get; } = [];
         public List<string> ApprovalIds { get; } = [];
         public string? AnalysisId { get; private set; }
+        public LibraryAdditionCreatedDto AddLibraryEntities(
+            string analysisId, int rootFolderId, int qualityProfileId, int metadataProfileId, string confirmation)
+        {
+            Calls.Add("add-library"); AnalysisId = analysisId;
+            return new LibraryAdditionCreatedDto(
+                5, 10, 20, Guid.Empty.ToString(), Guid.Empty.ToString(), Guid.Empty.ToString());
+        }
+        public ManualMappingCreatedDto CreateManualMapping(string analysisId, int releaseId, string mappingsJson, string confirmation)
+        {
+            Calls.Add("manual-map"); AnalysisId = analysisId;
+            return new ManualMappingCreatedDto("human-analysis");
+        }
         public ApprovalCreatedDto Approve(string analysisId)
         {
             Calls.Add("approve"); AnalysisId = analysisId;
