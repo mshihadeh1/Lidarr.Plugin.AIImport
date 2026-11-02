@@ -1,4 +1,5 @@
 using Lidarr.Plugin.AIImport.Lidarr;
+using Lidarr.Plugin.AIImport.Approval;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Music;
 using NzbDrone.Core.MediaFiles.TrackImport;
@@ -67,6 +68,48 @@ public sealed class DirectLidarrExecutionClientCommandTests
         });
     }
 
+
+    [Test]
+    public void Authoritative_review_ignores_only_unrelated_existing_library_rows()
+    {
+        var approved = ReviewedItem(trackId: 1001);
+        approved.Path = "/downloads/album/track.flac";
+        approved.DownloadId = "download";
+        var existing = ReviewedItem(trackId: 2002);
+        existing.Path = "/music/Other/existing.flac";
+        existing.DownloadId = null;
+
+        var selected = DirectLidarrExecutionClient.SelectAuthoritativeReviews(
+            [approved, existing], [approved.Path]);
+
+        Assert.That(selected.Keys, Is.EquivalentTo(new[] { approved.Path }));
+        Assert.That(selected[approved.Path], Is.SameAs(approved));
+    }
+
+    [Test]
+    public void Authoritative_review_fails_closed_for_missing_duplicate_or_foreign_download_rows()
+    {
+        const string source = "/downloads/album/track.flac";
+        var approved = ReviewedItem(trackId: 1001);
+        approved.Path = source;
+        approved.DownloadId = "download";
+        var duplicate = ReviewedItem(trackId: 1001);
+        duplicate.Path = source;
+        duplicate.DownloadId = "download";
+        var foreign = ReviewedItem(trackId: 2002);
+        foreign.Path = "/downloads/other/track.flac";
+        foreign.DownloadId = "other";
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(() => DirectLidarrExecutionClient.SelectAuthoritativeReviews([], [source]),
+                Throws.TypeOf<StaleApprovalException>());
+            Assert.That(() => DirectLidarrExecutionClient.SelectAuthoritativeReviews([approved, duplicate], [source]),
+                Throws.TypeOf<StaleApprovalException>());
+            Assert.That(() => DirectLidarrExecutionClient.SelectAuthoritativeReviews([approved, foreign], [source]),
+                Throws.TypeOf<StaleApprovalException>());
+        });
+    }
 
     [Test]
     public void Existing_library_decisions_are_not_pending_files_for_the_download()
