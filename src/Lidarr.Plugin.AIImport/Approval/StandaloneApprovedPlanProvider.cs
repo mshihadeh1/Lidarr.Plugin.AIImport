@@ -47,7 +47,10 @@ public sealed class StandaloneApprovedPlanProvider : IApprovedPlanProvider
         if (queueMatches.Length == 0)
             throw new StaleApprovalException("The failed import is no longer present in Lidarr.");
 
-        var files = _gateway.GetManualImports(stored.DownloadId);
+        var scan = _gateway.GetManualImportScan(stored.DownloadId);
+        if (scan.IndeterminateCount != 0)
+            throw new StaleApprovalException("Current Lidarr import evidence is contradictory; reconcile the Activity item and discover again.");
+        var files = scan.Files;
         var proposal = stored.Proposal;
         if (proposal.Status != ProposalStatus.Proposed || proposal.ArtistId is not > 0 ||
             proposal.AlbumId is not > 0 || proposal.ReleaseId is not > 0 || files.Count == 0)

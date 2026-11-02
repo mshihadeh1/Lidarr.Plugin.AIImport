@@ -14,6 +14,17 @@ public enum TrackedImportState
 
 public sealed record QueueCandidate(int Id, int? AlbumId, string Title, TrackedImportState State, string DownloadId);
 
+public sealed record ManualImportScanResult(
+    IReadOnlyList<SourceFileCandidate> Files,
+    int AlreadyImportedCount,
+    int IndeterminateCount);
+
+public sealed record AiImportDiscoveryDiagnostic(
+    string DownloadId,
+    int AlreadyImportedCount,
+    int IndeterminateCount,
+    string Message);
+
 public sealed record SourceFileCandidate(
     string Id,
     string Name,

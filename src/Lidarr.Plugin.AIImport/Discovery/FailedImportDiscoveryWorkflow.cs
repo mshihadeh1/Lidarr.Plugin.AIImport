@@ -53,11 +53,14 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             .ToArray();
 
         var analyses = new List<AiImportAnalysisDto>();
+        var diagnostics = new List<AiImportDiscoveryDiagnostic>();
         foreach (var item in failed)
         {
             try
             {
-                analyses.Add(Analyze(item, settings));
+                var analysis = Analyze(item, settings, out var diagnostic);
+                if (diagnostic is not null) diagnostics.Add(diagnostic);
+                if (analysis is not null) analyses.Add(analysis);
             }
             catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
             {
@@ -67,12 +70,26 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         }
         _analysisStore?.Replace(analyses.Select(x =>
             new StoredStandaloneAnalysis(x.AnalysisId, x.DownloadId, x.Proposal)).ToArray());
-        return new AiImportDiscoverResult(analyses.ToArray());
+        return new AiImportDiscoverResult(analyses.ToArray(), diagnostics.ToArray());
     }
 
-    private AiImportAnalysisDto Analyze(QueueCandidate item, AiImportSettings settings)
+    private AiImportAnalysisDto? Analyze(
+        QueueCandidate item,
+        AiImportSettings settings,
+        out AiImportDiscoveryDiagnostic? diagnostic)
     {
-        var files = _gateway.GetManualImports(item.DownloadId);
+        var scan = _gateway.GetManualImportScan(item.DownloadId);
+        var files = scan.Files;
+        diagnostic = scan.AlreadyImportedCount == 0 && scan.IndeterminateCount == 0
+            ? null
+            : new AiImportDiscoveryDiagnostic(
+                item.DownloadId,
+                scan.AlreadyImportedCount,
+                scan.IndeterminateCount,
+                scan.IndeterminateCount == 0
+                    ? "Files already imported as verified hardlinks were excluded."
+                    : "Files with contradictory import evidence were excluded and require Lidarr reconciliation.");
+        if (files.Count == 0) return null;
         var albumIds = GetCandidateAlbumIds(files, item.AlbumId);
         var candidates = albumIds.SelectMany(_gateway.GetReleaseCandidates)
             .GroupBy(x => x.Id)

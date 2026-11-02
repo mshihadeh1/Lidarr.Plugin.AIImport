@@ -409,10 +409,15 @@
     try {
       const response = await action('discover');
       const analyses = response.analyses || response || [];
+      const diagnostics = response.diagnostics || [];
       const proposed = analyses.filter(x => x.proposal && x.proposal.status === 'proposed').length;
       summary.textContent = `${analyses.length} analysis result(s): ${proposed} proposed, ${analyses.length - proposed} require manual review.`;
+      diagnostics.forEach(item => results.appendChild(element(
+        'p',
+        `${item.message} Already imported: ${item.alreadyImportedCount}; indeterminate: ${item.indeterminateCount}.`,
+        item.indeterminateCount ? 'error' : 'muted')));
       analyses.forEach(x => results.appendChild(renderAnalysis(x)));
-      if (!analyses.length) results.appendChild(element('p', 'No Import Blocked or Import Failed queue items were found.', 'muted'));
+      if (!analyses.length && !diagnostics.length) results.appendChild(element('p', 'No Import Blocked or Import Failed queue items were found.', 'muted'));
     } catch (error) {
       summary.textContent = `Discovery failed: ${error.message}`; summary.className = 'summary error';
     } finally { discoverButton.disabled = false; }
