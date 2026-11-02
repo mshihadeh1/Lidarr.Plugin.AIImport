@@ -86,12 +86,12 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
             ReplaceExistingFiles = false,
             DisableReleaseSwitching = false
         }).ToList());
-        if (reviewed.Count != plan.Files.Count)
-            throw new StaleApprovalException("Lidarr authoritative manual-import review returned an unexpected file count.");
-        var reviewedByPath = reviewed.ToDictionary(x => x.Path, StringComparer.Ordinal);
+        var reviewedByPath = SelectAuthoritativeReviews(
+            reviewed, plan.Files.Select(file => file.SourcePath).ToArray());
         foreach (var approved in plan.Files)
         {
             if (!reviewedByPath.TryGetValue(approved.SourcePath, out var item) ||
+                !string.Equals(item.DownloadId, approved.DownloadId, StringComparison.Ordinal) ||
                 !MatchesApprovedCorrectiveMapping(
                     item, plan.HumanOverride, plan.ArtistId, plan.AlbumId, plan.ReleaseId, approved.TrackId))
                 throw new StaleApprovalException("Lidarr rejected or changed the approved corrective mapping.");
@@ -99,6 +99,32 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
         if (HasOverlappingActiveManualImport(_commands.All(), plan.Files.Select(file => file.SourcePath).ToArray()))
             throw new StaleApprovalException("A queued or started manual-import command already overlaps this approval.");
         return Task.CompletedTask;
+    }
+
+    internal static IReadOnlyDictionary<string, ManualImportItem> SelectAuthoritativeReviews(
+        IReadOnlyCollection<ManualImportItem> reviewed,
+        IReadOnlyCollection<string> approvedSourcePaths)
+    {
+        var approved = approvedSourcePaths.ToHashSet(StringComparer.Ordinal);
+        if (approved.Count != approvedSourcePaths.Count || approved.Any(string.IsNullOrWhiteSpace))
+            throw new StaleApprovalException("The approved manual-import source set is invalid.");
+
+        foreach (var item in reviewed)
+        {
+            if (!approved.Contains(item.Path) && !string.IsNullOrWhiteSpace(item.DownloadId))
+                throw new StaleApprovalException("Lidarr authoritative manual-import review returned an unrelated download source.");
+        }
+
+        var selected = new Dictionary<string, ManualImportItem>(StringComparer.Ordinal);
+        foreach (var sourcePath in approved)
+        {
+            var matches = reviewed.Where(item => string.Equals(item.Path, sourcePath, StringComparison.Ordinal)).ToArray();
+            if (matches.Length != 1)
+                throw new StaleApprovalException("Lidarr authoritative manual-import review did not return exactly one approved source.");
+            selected.Add(sourcePath, matches[0]);
+        }
+
+        return selected;
     }
 
     internal static bool MatchesApprovedCorrectiveMapping(

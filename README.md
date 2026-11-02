@@ -1,4 +1,4 @@
-# Lidarr AI Import v1.1.1
+# Lidarr AI Import v1.1.2
 
 Standalone, approval-gated AI-assisted import matching for **Lidarr 3.1.2.4913**.
 
@@ -46,7 +46,7 @@ The plugin checks these settings again before authorization and command submissi
 
 ### From a GitHub release
 
-Install `Lidarr.Plugin.AIImport-v1.1.1.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
+Install `Lidarr.Plugin.AIImport-v1.1.2.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
 ### Manual installation
 
@@ -68,7 +68,7 @@ Install `Lidarr.Plugin.AIImport-v1.1.1.net8.0.zip` through Lidarr's plugin suppo
    ```
 
 3. Restart Lidarr.
-4. Confirm **System → Plugins** reports `AI Import` version `1.1.1.0`.
+4. Confirm **System → Plugins** reports `AI Import` version `1.1.2.0`.
 5. Configure the exact Media Management settings listed above and restart Lidarr once more.
 
 ## Configure the LLM endpoint
@@ -102,6 +102,8 @@ Upgrading to v1.1.0 intentionally invalidates analyses created by earlier plugin
 
 v1.1.1 excludes both Lidarr's null-identity existing-library decisions and source rows proven already imported. Suppression requires one matching import-history event, matching current track-file and track bindings, matching quality/size/flags, and identical source/destination device and inode. Contradictory evidence is excluded from approval and shown as requiring reconciliation. The plugin does not delete or clear Lidarr Activity entries; stale rows may remain visible in Lidarr while the plugin ignores them. For an explicitly human-reviewed proposal, Lidarr must still accept the exact source, artist, album, and release without rejections, but its automatic track guess no longer overrides the user's separately validated track selection. Run **Discover** again after upgrading; do not reuse an older analysis.
 
+v1.1.2 accepts Lidarr's authoritative review when it returns each approved source exactly once plus unrelated existing-library rows with no download identity. Missing or duplicate approved sources and unrelated rows carrying a download identity still fail closed. Restart Lidarr and run **Discover** again after upgrading.
+
 ### Downloads for artists not yet in Lidarr
 
 When qBittorrent sends a failed/blocked download to Lidarr and every source file has the same valid MusicBrainz artist, release-group, and release tags, discovery offers **Add verified artist and album**. Select an existing accessible Lidarr root folder, quality profile, and metadata profile, review the exact MusicBrainz IDs, and explicitly approve the library addition. The plugin calls Lidarr's own metadata, add, refresh, release-monitoring, and read-back services. It adds or reuses only the exact artist/album, selects only the tagged release, disables searches, and does not import files during this action. Run discovery again, review the resulting Lidarr-backed mapping, create an expiring approval, and execute normally.
@@ -129,7 +131,7 @@ If an execute response is lost or reports `Indeterminate`, do not execute again.
 
 ```bash
 git submodule update --init --recursive
-VERSION=1.1.1 ./scripts/build.sh
+VERSION=1.1.2 ./scripts/build.sh
 ```
 
 A dirty local verification build requires `ALLOW_DIRTY_BUILD=1` and intentionally does not claim a corresponding-source commit URL. Release packages must be produced from a clean tagged tree.
