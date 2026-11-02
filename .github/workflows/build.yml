@@ -162,7 +162,7 @@ jobs:
           body: |
             Standalone Lidarr AI Import plugin with an authenticated in-Lidarr workspace for failed-import discovery, source-to-track review, explicit single-use approvals, strict hardlink-only execution, status, and fail-closed per-file reconciliation. No shell workflow, companion service, or separate Lidarr API credentials are required.
 
-            v1.1.2 accepts Lidarr's authoritative review when every approved source is returned exactly once, while ignoring only unrelated existing-library rows that carry no download identity. Missing, duplicate, or foreign-download sources still fail closed. It retains v1.1.1's already-imported discovery reconciliation and separately validated human-selected track behavior.
+            v1.1.3 accepts Lidarr's authoritative review when every approved source is returned exactly once, while ignoring only absolute, unique rows explicitly marked as additional existing-library files with no download identity. It revalidates all approved source material after review; missing, duplicate, malformed, changed, or foreign-download sources fail closed.
 
             This release requests strict JSON Schema output from OpenAI-compatible endpoints and optionally sends `enable_thinking=false` for compatible Qwen/llama.cpp servers. Model output remains subject to independent strict validation.
 
