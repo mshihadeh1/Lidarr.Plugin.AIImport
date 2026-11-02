@@ -78,6 +78,7 @@ jobs:
           dotnet build vendor/Lidarr/src/Lidarr.Http/Lidarr.Http.csproj "${common[@]}" -p:AssemblyVersion=3.1.2.4913
           dotnet build src/Lidarr.Plugin.AIImport/Lidarr.Plugin.AIImport.csproj "${common[@]}" --no-dependencies "${plugin[@]}"
           dotnet build tests/Lidarr.Plugin.AIImport.Tests/Lidarr.Plugin.AIImport.Tests.csproj "${common[@]}" --no-dependencies "${plugin[@]}"
+          dotnet build tests/Lidarr.AIImport.Companion.Tests/Lidarr.AIImport.Companion.Tests.csproj "${common[@]}"
 
       - name: Test plugin
         # Native-helper attestation intentionally requires root-owned fixture files.
@@ -88,15 +89,16 @@ jobs:
           -p:PluginVersion="$PLUGIN_VERSION" -p:PluginAssemblyVersion="$PLUGIN_ASSEMBLY_VERSION"
           -p:NativeHelperSha256="$NATIVE_HELPER_SHA256"
 
+      - name: Test retained regression suite
+        # Retained native-helper attestation tests also require root-owned fixtures.
+        run: >-
+          sudo --preserve-env=DOTNET_ROOT dotnet test tests/Lidarr.AIImport.Companion.Tests/Lidarr.AIImport.Companion.Tests.csproj -m:1
+          --no-build --no-restore --configuration Release --nologo --verbosity minimal
+          -p:NuGetAudit=false -p:EnableAnalyzers=false
+
       - name: Restore workspace ownership after root-only attestation tests
         shell: bash
         run: sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
-
-      - name: Test retained regression suite
-        run: >-
-          dotnet test tests/Lidarr.AIImport.Companion.Tests/Lidarr.AIImport.Companion.Tests.csproj -m:1
-          --no-restore --configuration Release --nologo --verbosity minimal
-          -p:NuGetAudit=false -p:EnableAnalyzers=false
 
       - name: Test native hardlink helper
         run: bash tests/native-hardlink-helper-tests.sh
