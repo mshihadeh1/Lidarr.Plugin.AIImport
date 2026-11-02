@@ -91,7 +91,7 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
         foreach (var approved in plan.Files)
         {
             if (!reviewedByPath.TryGetValue(approved.SourcePath, out var item) ||
-                !string.Equals(item.DownloadId, approved.DownloadId, StringComparison.Ordinal) ||
+                !MatchesApprovedReviewMaterial(item, approved) ||
                 !MatchesApprovedCorrectiveMapping(
                     item, plan.HumanOverride, plan.ArtistId, plan.AlbumId, plan.ReleaseId, approved.TrackId))
                 throw new StaleApprovalException("Lidarr rejected or changed the approved corrective mapping.");
@@ -106,13 +106,16 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
         IReadOnlyCollection<string> approvedSourcePaths)
     {
         var approved = approvedSourcePaths.ToHashSet(StringComparer.Ordinal);
-        if (approved.Count != approvedSourcePaths.Count || approved.Any(string.IsNullOrWhiteSpace))
+        if (approved.Count != approvedSourcePaths.Count ||
+            approved.Any(path => string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)))
             throw new StaleApprovalException("The approved manual-import source set is invalid.");
 
-        foreach (var item in reviewed)
+        var extras = reviewed.Where(item => !approved.Contains(item.Path)).ToArray();
+        if (extras.Any(item => !item.AdditionalFile || !string.IsNullOrWhiteSpace(item.DownloadId) ||
+                              string.IsNullOrWhiteSpace(item.Path) || !Path.IsPathFullyQualified(item.Path)) ||
+            extras.Select(item => item.Path).Distinct(StringComparer.Ordinal).Count() != extras.Length)
         {
-            if (!approved.Contains(item.Path) && !string.IsNullOrWhiteSpace(item.DownloadId))
-                throw new StaleApprovalException("Lidarr authoritative manual-import review returned an unrelated download source.");
+            throw new StaleApprovalException("Lidarr authoritative manual-import review returned an unverified unrelated source.");
         }
 
         var selected = new Dictionary<string, ManualImportItem>(StringComparer.Ordinal);
@@ -125,6 +128,17 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
         }
 
         return selected;
+    }
+
+    internal static bool MatchesApprovedReviewMaterial(ManualImportItem item, ApprovedImportFile approved)
+    {
+        return item.Id == approved.ManualImportId &&
+               string.Equals(item.Path, approved.SourcePath, StringComparison.Ordinal) &&
+               string.Equals(item.DownloadId, approved.DownloadId, StringComparison.Ordinal) &&
+               item.Size == approved.Size && item.IndexerFlags == approved.IndexerFlags &&
+               !item.AdditionalFile && !item.ReplaceExistingFiles && !item.DisableReleaseSwitching &&
+               item.Quality is not null &&
+               JsonNode.DeepEquals(JsonSerializer.SerializeToNode(item.Quality), approved.Quality);
     }
 
     internal static bool MatchesApprovedCorrectiveMapping(

@@ -1,5 +1,8 @@
 using Lidarr.Plugin.AIImport.Lidarr;
 using Lidarr.Plugin.AIImport.Approval;
+using Lidarr.Plugin.AIImport.Filesystem;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Music;
 using NzbDrone.Core.MediaFiles.TrackImport;
@@ -78,6 +81,7 @@ public sealed class DirectLidarrExecutionClientCommandTests
         var existing = ReviewedItem(trackId: 2002);
         existing.Path = "/music/Other/existing.flac";
         existing.DownloadId = null;
+        existing.AdditionalFile = true;
 
         var selected = DirectLidarrExecutionClient.SelectAuthoritativeReviews(
             [approved, existing], [approved.Path]);
@@ -112,6 +116,69 @@ public sealed class DirectLidarrExecutionClientCommandTests
     }
 
     [Test]
+    public void Authoritative_review_rejects_unproven_or_malformed_extra_rows()
+    {
+        const string source = "/downloads/album/track.flac";
+        var approved = ReviewedItem(trackId: 1001);
+        approved.Path = source;
+        approved.DownloadId = "download";
+        var nonAdditional = ReviewedItem(trackId: 2002);
+        nonAdditional.Path = "/music/Other/existing.flac";
+        var relative = ReviewedItem(trackId: 2003);
+        relative.Path = "relative.flac";
+        relative.AdditionalFile = true;
+        var duplicateA = ReviewedItem(trackId: 2004);
+        duplicateA.Path = "/music/Other/duplicate.flac";
+        duplicateA.AdditionalFile = true;
+        var duplicateB = ReviewedItem(trackId: 2004);
+        duplicateB.Path = duplicateA.Path;
+        duplicateB.AdditionalFile = true;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(() => DirectLidarrExecutionClient.SelectAuthoritativeReviews([approved, nonAdditional], [source]),
+                Throws.TypeOf<StaleApprovalException>());
+            Assert.That(() => DirectLidarrExecutionClient.SelectAuthoritativeReviews([approved, relative], [source]),
+                Throws.TypeOf<StaleApprovalException>());
+            Assert.That(() => DirectLidarrExecutionClient.SelectAuthoritativeReviews([approved, duplicateA, duplicateB], [source]),
+                Throws.TypeOf<StaleApprovalException>());
+        });
+    }
+
+    [Test]
+    public void Approved_review_material_must_remain_exact_and_non_additional()
+    {
+        var approved = ApprovedFile();
+        var reviewed = ReviewedItem(trackId: approved.TrackId);
+        reviewed.Id = approved.ManualImportId;
+        reviewed.Path = approved.SourcePath;
+        reviewed.DownloadId = approved.DownloadId;
+        reviewed.Size = approved.Size;
+        reviewed.IndexerFlags = approved.IndexerFlags;
+        reviewed.Quality = JsonSerializer.Deserialize<NzbDrone.Core.Qualities.QualityModel>(approved.Quality.ToJsonString());
+
+        Assert.That(DirectLidarrExecutionClient.MatchesApprovedReviewMaterial(reviewed, approved), Is.True);
+
+        Assert.Multiple(() =>
+        {
+            reviewed.Id++;
+            Assert.That(DirectLidarrExecutionClient.MatchesApprovedReviewMaterial(reviewed, approved), Is.False);
+            reviewed.Id = approved.ManualImportId;
+            reviewed.Size++;
+            Assert.That(DirectLidarrExecutionClient.MatchesApprovedReviewMaterial(reviewed, approved), Is.False);
+            reviewed.Size = approved.Size;
+            reviewed.IndexerFlags++;
+            Assert.That(DirectLidarrExecutionClient.MatchesApprovedReviewMaterial(reviewed, approved), Is.False);
+            reviewed.IndexerFlags = approved.IndexerFlags;
+            reviewed.DownloadId = "other";
+            Assert.That(DirectLidarrExecutionClient.MatchesApprovedReviewMaterial(reviewed, approved), Is.False);
+            reviewed.DownloadId = approved.DownloadId;
+            reviewed.AdditionalFile = true;
+            Assert.That(DirectLidarrExecutionClient.MatchesApprovedReviewMaterial(reviewed, approved), Is.False);
+        });
+    }
+
+    [Test]
     public void Existing_library_decisions_are_not_pending_files_for_the_download()
     {
         var pending = InProcessLidarrGateway.FilterPendingDownloadFiles(
@@ -139,6 +206,12 @@ public sealed class DirectLidarrExecutionClientCommandTests
         Tracks = [new Track { Id = trackId }],
         Rejections = []
     };
+
+    private static ApprovedImportFile ApprovedFile() => new(
+        "source-1", 123, "/downloads/album/track.flac", 1001,
+        JsonSerializer.SerializeToNode(new NzbDrone.Core.Qualities.QualityModel())!.AsObject(),
+        0, "download", 100,
+        new FileIdentity(1, 2, 100, 3, 4, 5, 6, 0x81A4, 1000, 1000, 1));
 
     private static ManualImportCommand CommandWith(ManualImportFile file) => new()
     {
