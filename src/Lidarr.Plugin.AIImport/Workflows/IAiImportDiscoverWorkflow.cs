@@ -8,7 +8,14 @@ public interface IAiImportDiscoverWorkflow
     AiImportDiscoverResult Discover(AiImportSettings settings);
 }
 
-public sealed record AiImportDiscoverResult(IReadOnlyList<AiImportAnalysisDto> Analyses)
+public sealed record AiImportDiscoverResult(
+    IReadOnlyList<AiImportAnalysisDto> Analyses,
+    IReadOnlyList<AiImportDiscoveryDiagnostic> Diagnostics)
 {
+    public AiImportDiscoverResult(IReadOnlyList<AiImportAnalysisDto> analyses)
+        : this(analyses, [])
+    {
+    }
+
     public int CandidateCount => Analyses.Count;
 }

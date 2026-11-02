@@ -92,14 +92,34 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
         foreach (var approved in plan.Files)
         {
             if (!reviewedByPath.TryGetValue(approved.SourcePath, out var item) ||
-                item.Rejections?.Any() == true || item.Tracks.Count != 1 || item.Tracks[0].Id != approved.TrackId ||
-                item.Artist?.Id != plan.ArtistId || item.Album?.Id != plan.AlbumId || item.Release?.Id != plan.ReleaseId)
+                !MatchesApprovedCorrectiveMapping(
+                    item, plan.HumanOverride, plan.ArtistId, plan.AlbumId, plan.ReleaseId, approved.TrackId))
                 throw new StaleApprovalException("Lidarr rejected or changed the approved corrective mapping.");
         }
         if (HasOverlappingActiveManualImport(_commands.All(), plan.Files.Select(file => file.SourcePath).ToArray()))
             throw new StaleApprovalException("A queued or started manual-import command already overlaps this approval.");
         return Task.CompletedTask;
     }
+
+    internal static bool MatchesApprovedCorrectiveMapping(
+        ManualImportItem item,
+        bool humanOverride,
+        int artistId,
+        int albumId,
+        int releaseId,
+        int approvedTrackId)
+    {
+        if (item.Rejections?.Any() == true || item.Artist?.Id != artistId ||
+            item.Album?.Id != albumId || item.Release?.Id != releaseId)
+            return false;
+
+        // Lidarr's UpdateItems endpoint recalculates tracks from tags and has no input for the
+        // user's selected track IDs. A provenance-bound human override was already checked
+        // against the current release/track candidates, so require Lidarr to accept the source,
+        // artist, album, and release without treating its automatic track guess as authoritative.
+        return humanOverride || item.Tracks.Count == 1 && item.Tracks[0].Id == approvedTrackId;
+    }
+
 
     internal static bool HasOverlappingActiveManualImport(
         IEnumerable<CommandModel> commands,

@@ -10,6 +10,8 @@ using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.TrackImport.Manual;
 using NzbDrone.Core.Music;
 using Lidarr.Plugin.AIImport.Workflows;
+using Lidarr.Plugin.AIImport.Filesystem;
+using NzbDrone.Core.History;
 
 namespace Lidarr.Plugin.AIImport.Lidarr;
 
@@ -18,6 +20,8 @@ public interface IInProcessLidarrGateway
     string Version { get; }
     IReadOnlyList<QueueCandidate> GetTrackedDownloads();
     IReadOnlyList<SourceFileCandidate> GetManualImports(string downloadId);
+    ManualImportScanResult GetManualImportScan(string downloadId) =>
+        new(GetManualImports(downloadId), 0, 0);
     IReadOnlyList<ReleaseCandidate> GetReleaseCandidates(int albumId);
 }
 
@@ -30,6 +34,7 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
     private readonly ITrackService _tracks;
     private readonly IRuntimeInfo _runtimeInfo;
     private readonly IConfigFileProvider _config;
+    private readonly ImportedSourceReconciler _importedSources;
 
     public InProcessLidarrGateway(
         ITrackedDownloadService trackedDownloads,
@@ -39,7 +44,10 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
         ITrackService tracks,
         IRuntimeInfo runtimeInfo,
         IConfigFileProvider config,
-        IAppFolderInfo appFolderInfo)
+        IAppFolderInfo appFolderInfo,
+        IHistoryService history,
+        IMediaFileService mediaFiles,
+        IFileIdentityProvider identities)
     {
         _trackedDownloads = trackedDownloads;
         _manualImports = manualImports;
@@ -48,6 +56,7 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
         _tracks = tracks;
         _runtimeInfo = runtimeInfo;
         _config = config;
+        _importedSources = new ImportedSourceReconciler(history, mediaFiles, tracks, identities);
         new StandaloneStatePaths(appFolderInfo).ConfigureAuthorizationEnvironment();
     }
 
@@ -82,7 +91,10 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
             .ToArray();
     }
 
-    public IReadOnlyList<SourceFileCandidate> GetManualImports(string downloadId)
+    public IReadOnlyList<SourceFileCandidate> GetManualImports(string downloadId) =>
+        GetManualImportScan(downloadId).Files;
+
+    public ManualImportScanResult GetManualImportScan(string downloadId)
     {
         if (string.IsNullOrWhiteSpace(downloadId))
         {
@@ -101,7 +113,26 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
 
         var artist = tracked.RemoteAlbum?.Artist;
         var files = _manualImports.GetMediaFiles(path, downloadId, artist, FilterFilesType.None, false);
-        var result = files.Select(file =>
+        var pending = new List<ManualImportItem>();
+        var alreadyImported = 0;
+        var indeterminate = 0;
+        foreach (var file in FilterPendingDownloadFiles(files, downloadId))
+        {
+            switch (_importedSources.Classify(file, downloadId))
+            {
+                case ExistingImportClassification.Pending:
+                    pending.Add(file);
+                    break;
+                case ExistingImportClassification.AlreadyImported:
+                    alreadyImported++;
+                    break;
+                case ExistingImportClassification.Indeterminate:
+                    indeterminate++;
+                    break;
+            }
+        }
+
+        var result = pending.Select(file =>
         {
             var tags = file.Tags;
             return new SourceFileCandidate(
@@ -137,7 +168,24 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
             throw new InvalidDataException("Lidarr returned duplicate manual-import source identities.");
         }
 
-        return result;
+        return new ManualImportScanResult(result, alreadyImported, indeterminate);
+    }
+
+    internal static IReadOnlyList<ManualImportItem> FilterPendingDownloadFiles(
+        IEnumerable<ManualImportItem> items,
+        string downloadId)
+    {
+        if (string.IsNullOrWhiteSpace(downloadId))
+            throw new ArgumentException("A tracked download ID is required.", nameof(downloadId));
+        var pending = new List<ManualImportItem>();
+        foreach (var item in items)
+        {
+            if (string.IsNullOrWhiteSpace(item.DownloadId)) continue;
+            if (!string.Equals(item.DownloadId, downloadId, StringComparison.Ordinal))
+                throw new InvalidDataException("Lidarr returned a manual-import source for a different download.");
+            pending.Add(item);
+        }
+        return pending;
     }
 
     public IReadOnlyList<ReleaseCandidate> GetReleaseCandidates(int albumId)

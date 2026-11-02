@@ -59,6 +59,69 @@ public sealed class StandaloneDiscoveryWorkflowTests
     }
 
     [Test]
+    public void Discovery_skips_stale_failed_queue_entries_with_no_pending_download_files()
+    {
+        var gateway = new FakeGateway(
+            [
+                new QueueCandidate(1, 10, "already imported", TrackedImportState.ImportBlocked, "stale"),
+                new QueueCandidate(2, 10, "pending", TrackedImportState.ImportFailed, "pending")
+            ],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>>
+            {
+                ["stale"] = [],
+                ["pending"] = [Source("source-1")]
+            },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release()] });
+
+        var result = new FailedImportDiscoveryWorkflow(gateway, new DeterministicMatcher(), null).Discover(Settings());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Analyses.Select(x => x.DownloadId), Is.EqualTo(new[] { "pending" }));
+            Assert.That(gateway.ManualImportDownloadIds, Is.EqualTo(new[] { "stale", "pending" }));
+            Assert.That(gateway.ReleaseAlbumIds, Is.EqualTo(new[] { 10 }));
+        });
+    }
+
+    [Test]
+    public void Discovery_reports_verified_already_imported_files_without_making_them_actionable()
+    {
+        var gateway = new FakeGateway(
+            [new QueueCandidate(1, 10, "stale", TrackedImportState.ImportFailed, "stale")],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>> { ["stale"] = [] },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>>(),
+            scanCounts: new Dictionary<string, (int Imported, int Indeterminate)> { ["stale"] = (2, 0) });
+
+        var result = new FailedImportDiscoveryWorkflow(gateway, new DeterministicMatcher(), null).Discover(Settings());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Analyses, Is.Empty);
+            Assert.That(result.Diagnostics.Single().AlreadyImportedCount, Is.EqualTo(2));
+            Assert.That(result.Diagnostics.Single().IndeterminateCount, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void Discovery_excludes_indeterminate_import_evidence_and_reports_reconciliation_required()
+    {
+        var gateway = new FakeGateway(
+            [new QueueCandidate(1, 10, "uncertain", TrackedImportState.ImportFailed, "uncertain")],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>> { ["uncertain"] = [] },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>>(),
+            scanCounts: new Dictionary<string, (int Imported, int Indeterminate)> { ["uncertain"] = (0, 1) });
+
+        var result = new FailedImportDiscoveryWorkflow(gateway, new DeterministicMatcher(), null).Discover(Settings());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Analyses, Is.Empty);
+            Assert.That(result.Diagnostics.Single().IndeterminateCount, Is.EqualTo(1));
+            Assert.That(result.Diagnostics.Single().Message, Does.Contain("reconciliation"));
+        });
+    }
+
+    [Test]
     public void Discovery_output_contains_no_absolute_source_paths_or_provider_secrets()
     {
         var source = Source("source-1") with { SourcePath = "/downloads/Artist/Album/01 Song.flac" };
@@ -165,7 +228,8 @@ public sealed class StandaloneDiscoveryWorkflowTests
         IReadOnlyList<QueueCandidate> queue,
         IReadOnlyDictionary<string, IReadOnlyList<SourceFileCandidate>> sources,
         IReadOnlyDictionary<int, IReadOnlyList<ReleaseCandidate>> releases,
-        IReadOnlySet<string>? vanishedDownloads = null) : IInProcessLidarrGateway
+        IReadOnlySet<string>? vanishedDownloads = null,
+        IReadOnlyDictionary<string, (int Imported, int Indeterminate)>? scanCounts = null) : IInProcessLidarrGateway
     {
         public List<string> ManualImportDownloadIds { get; } = [];
         public List<int> ReleaseAlbumIds { get; } = [];
@@ -177,6 +241,13 @@ public sealed class StandaloneDiscoveryWorkflowTests
             if (vanishedDownloads?.Contains(downloadId) == true)
                 throw new FileNotFoundException("Tracked download vanished.");
             return sources[downloadId];
+        }
+        public ManualImportScanResult GetManualImportScan(string downloadId)
+        {
+            var files = GetManualImports(downloadId);
+            return scanCounts is not null && scanCounts.TryGetValue(downloadId, out var counts)
+                ? new ManualImportScanResult(files, counts.Imported, counts.Indeterminate)
+                : new ManualImportScanResult(files, 0, 0);
         }
         public IReadOnlyList<ReleaseCandidate> GetReleaseCandidates(int albumId)
         {
