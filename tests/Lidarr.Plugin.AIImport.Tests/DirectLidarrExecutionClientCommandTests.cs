@@ -55,10 +55,43 @@ public sealed class DirectLidarrExecutionClientCommandTests
     }
 
     [Test]
-    public void Human_selected_mapping_still_rejects_Lidarr_rejections_or_changed_ownership()
+    public void Human_selected_mapping_allows_only_automatic_identification_rejections()
+    {
+        var identificationReasons = new[]
+        {
+            "Couldn't find similar album for /downloads/album",
+            "Album match is not close enough: 0.0% vs 80% title mismatch",
+            "No tracks matched",
+            "Worst track match: 0.0% vs 60% title mismatch",
+            "Track match is not close enough: 0.0% vs 60% duration mismatch",
+            "Has unmatched tracks",
+            "Has missing tracks",
+            "Couldn't parse track from: unreadable tags"
+        };
+
+        Assert.Multiple(() =>
+        {
+            foreach (var reason in identificationReasons)
+            {
+                var reviewed = ReviewedItem(trackId: 2002);
+                reviewed.Rejections = [new Rejection(reason)];
+                Assert.That(DirectLidarrExecutionClient.MatchesApprovedCorrectiveMapping(
+                    reviewed, humanOverride: true, artistId: 5, albumId: 10, releaseId: 101, approvedTrackId: 1001),
+                    Is.True, reason);
+                Assert.That(DirectLidarrExecutionClient.MatchesApprovedCorrectiveMapping(
+                    reviewed, humanOverride: false, artistId: 5, albumId: 10, releaseId: 101, approvedTrackId: 1001),
+                    Is.False, reason);
+            }
+        });
+    }
+
+    [Test]
+    public void Human_selected_mapping_still_rejects_import_safety_rejections_or_changed_ownership()
     {
         var rejected = ReviewedItem(trackId: 2002);
-        rejected.Rejections = [new Rejection("Source is not importable")];
+        rejected.Rejections = [new Rejection("Not enough free space")];
+        var alreadyImported = ReviewedItem(trackId: 2002);
+        alreadyImported.Rejections = [new Rejection("Album already imported at 11/2/2026")];
         var wrongRelease = ReviewedItem(trackId: 2002);
         wrongRelease.Release = new AlbumRelease { Id = 999, AlbumId = 10 };
 
@@ -66,6 +99,8 @@ public sealed class DirectLidarrExecutionClientCommandTests
         {
             Assert.That(DirectLidarrExecutionClient.MatchesApprovedCorrectiveMapping(
                 rejected, humanOverride: true, artistId: 5, albumId: 10, releaseId: 101, approvedTrackId: 1001), Is.False);
+            Assert.That(DirectLidarrExecutionClient.MatchesApprovedCorrectiveMapping(
+                alreadyImported, humanOverride: true, artistId: 5, albumId: 10, releaseId: 101, approvedTrackId: 1001), Is.False);
             Assert.That(DirectLidarrExecutionClient.MatchesApprovedCorrectiveMapping(
                 wrongRelease, humanOverride: true, artistId: 5, albumId: 10, releaseId: 101, approvedTrackId: 1001), Is.False);
         });
