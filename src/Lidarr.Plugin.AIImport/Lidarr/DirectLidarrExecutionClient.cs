@@ -90,11 +90,16 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
             reviewed, plan.Files.Select(file => file.SourcePath).ToArray());
         foreach (var approved in plan.Files)
         {
-            if (!reviewedByPath.TryGetValue(approved.SourcePath, out var item) ||
-                !MatchesApprovedReviewMaterial(item, approved) ||
-                !MatchesApprovedCorrectiveMapping(
-                    item, plan.HumanOverride, plan.ArtistId, plan.AlbumId, plan.ReleaseId, approved.TrackId))
-                throw new StaleApprovalException("Lidarr rejected or changed the approved corrective mapping.");
+            if (!reviewedByPath.TryGetValue(approved.SourcePath, out var item))
+                throw new StaleApprovalException("Lidarr authoritative review omitted an approved source.");
+            if (!MatchesApprovedReviewMaterial(item, approved))
+                throw new StaleApprovalException("Lidarr authoritative review changed approved source material.");
+            if (item.Artist?.Id != plan.ArtistId || item.Album?.Id != plan.AlbumId || item.Release?.Id != plan.ReleaseId)
+                throw new StaleApprovalException("Lidarr authoritative review changed approved ownership.");
+            if (!HasOnlyPermittedRejections(item, plan.HumanOverride))
+                throw new StaleApprovalException("Lidarr authoritative review returned a non-identification safety rejection.");
+            if (!plan.HumanOverride && (item.Tracks.Count != 1 || item.Tracks[0].Id != approved.TrackId))
+                throw new StaleApprovalException("Lidarr authoritative review changed the approved automatic track mapping.");
         }
         if (HasOverlappingActiveManualImport(_commands.All(), plan.Files.Select(file => file.SourcePath).ToArray()))
             throw new StaleApprovalException("A queued or started manual-import command already overlaps this approval.");
@@ -149,7 +154,7 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
         int releaseId,
         int approvedTrackId)
     {
-        if (item.Rejections?.Any() == true || item.Artist?.Id != artistId ||
+        if (!HasOnlyPermittedRejections(item, humanOverride) || item.Artist?.Id != artistId ||
             item.Album?.Id != albumId || item.Release?.Id != releaseId)
             return false;
 
@@ -158,6 +163,31 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
         // against the current release/track candidates, so require Lidarr to accept the source,
         // artist, album, and release without treating its automatic track guess as authoritative.
         return humanOverride || item.Tracks.Count == 1 && item.Tracks[0].Id == approvedTrackId;
+    }
+
+    internal static bool HasOnlyPermittedRejections(ManualImportItem item, bool humanOverride)
+    {
+        var rejections = item.Rejections?.ToArray() ?? [];
+        if (rejections.Length == 0) return true;
+        if (!humanOverride) return false;
+
+        // A complete provenance-bound human mapping replaces only Lidarr's tag-distance and
+        // automatic track-completeness judgement. Import safety and library-state rejections
+        // (free space, upgrades, existing imports, roots, unpacking, and similar) still block.
+        return rejections.All(rejection => IsAutomaticIdentificationRejection(rejection.Reason));
+    }
+
+    private static bool IsAutomaticIdentificationRejection(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return false;
+        return reason.StartsWith("Couldn't find similar album for ", StringComparison.Ordinal) ||
+               reason.StartsWith("Album match is not close enough:", StringComparison.Ordinal) ||
+               string.Equals(reason, "No tracks matched", StringComparison.Ordinal) ||
+               reason.StartsWith("Worst track match:", StringComparison.Ordinal) ||
+               reason.StartsWith("Track match is not close enough:", StringComparison.Ordinal) ||
+               string.Equals(reason, "Has unmatched tracks", StringComparison.Ordinal) ||
+               string.Equals(reason, "Has missing tracks", StringComparison.Ordinal) ||
+               reason.StartsWith("Couldn't parse track from:", StringComparison.Ordinal);
     }
 
 
