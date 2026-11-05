@@ -1,4 +1,4 @@
-# Lidarr AI Import v1.1.4
+# Lidarr AI Import v1.1.5
 
 Standalone, approval-gated AI-assisted import matching for **Lidarr 3.1.2.4913**.
 
@@ -46,7 +46,7 @@ The plugin checks these settings again before authorization and command submissi
 
 ### From a GitHub release
 
-Install `Lidarr.Plugin.AIImport-v1.1.4.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
+Install `Lidarr.Plugin.AIImport-v1.1.5.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
 ### Manual installation
 
@@ -68,7 +68,7 @@ Install `Lidarr.Plugin.AIImport-v1.1.4.net8.0.zip` through Lidarr's plugin suppo
    ```
 
 3. Restart Lidarr.
-4. Confirm **System → Plugins** reports `AI Import` version `1.1.4.0`.
+4. Confirm **System → Plugins** reports `AI Import` version `1.1.5.0`.
 5. Configure the exact Media Management settings listed above and restart Lidarr once more.
 
 ## Configure the LLM endpoint
@@ -108,6 +108,8 @@ v1.1.3 narrows that exception to rows Lidarr explicitly marks as additional exis
 
 v1.1.4 lets a provenance-bound complete human mapping override only Lidarr's automatic tag-distance and track-completeness rejections. Import-safety and library-state rejections—including free space, existing imports, upgrades, root folders, and unpacking—still fail closed. Approval errors now identify whether source material, ownership, safety rejection, or automatic mapping changed.
 
+v1.1.5 uses the same reconciled manual-import scan for discovery, human mapping creation, library addition, and approval. Stale Activity rows proven already imported no longer make a newly created human mapping immediately stale; contradictory evidence still fails closed.
+
 ### Downloads for artists not yet in Lidarr
 
 When qBittorrent sends a failed/blocked download to Lidarr and every source file has the same valid MusicBrainz artist, release-group, and release tags, discovery offers **Add verified artist and album**. Select an existing accessible Lidarr root folder, quality profile, and metadata profile, review the exact MusicBrainz IDs, and explicitly approve the library addition. The plugin calls Lidarr's own metadata, add, refresh, release-monitoring, and read-back services. It adds or reuses only the exact artist/album, selects only the tagged release, disables searches, and does not import files during this action. Run discovery again, review the resulting Lidarr-backed mapping, create an expiring approval, and execute normally.
@@ -135,7 +137,7 @@ If an execute response is lost or reports `Indeterminate`, do not execute again.
 
 ```bash
 git submodule update --init --recursive
-VERSION=1.1.4 ./scripts/build.sh
+VERSION=1.1.5 ./scripts/build.sh
 ```
 
 A dirty local verification build requires `ALLOW_DIRTY_BUILD=1` and intentionally does not claim a corresponding-source commit URL. Release packages must be produced from a clean tagged tree.

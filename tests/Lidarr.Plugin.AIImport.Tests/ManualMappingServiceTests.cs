@@ -20,7 +20,10 @@ public sealed class ManualMappingServiceTests
         };
         var gateway = new MutableGateway(
             [new QueueCandidate(1, 10, "failed", TrackedImportState.ImportFailed, "download")],
-            [source], releases);
+            [source, Source("stale-activity-row")], releases)
+        {
+            ScanFiles = [source]
+        };
         var store = new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json"));
         var manual = new MatchProposal(1, ProposalStatus.ManualReview, null, null, null, 0m, "Human review required.", []);
         var originalId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", 10, [source], releases[10], manual);
@@ -135,8 +138,8 @@ public sealed class ManualMappingServiceTests
         Assert.Throws<StaleApprovalException>(() => store.GetRequired("override"));
     }
 
-    private static SourceFileCandidate Source() =>
-        new("source-1", "01 Song.flac", "Artist", "Album", "Song", 1, [1], 180000, null, [], 5, 10);
+    private static SourceFileCandidate Source(string id = "source-1") =>
+        new(id, "01 Song.flac", "Artist", "Album", "Song", 1, [1], 180000, null, [], 5, 10);
 
     private static ReleaseCandidate Release(int id) =>
         new(10, id, "Artist", "Album", "release-" + id, "Album", string.Empty,
@@ -147,9 +150,12 @@ public sealed class ManualMappingServiceTests
         IReadOnlyList<SourceFileCandidate> files,
         IReadOnlyDictionary<int, IReadOnlyList<ReleaseCandidate>> releases) : IInProcessLidarrGateway
     {
+        public IReadOnlyList<SourceFileCandidate>? ScanFiles { get; init; }
         public string Version => FailedImportDiscoveryWorkflow.CompatibleLidarrVersion;
         public IReadOnlyList<QueueCandidate> GetTrackedDownloads() => queue;
         public IReadOnlyList<SourceFileCandidate> GetManualImports(string downloadId) => files;
+        public ManualImportScanResult GetManualImportScan(string downloadId) =>
+            new(ScanFiles ?? files, files.Count - (ScanFiles?.Count ?? files.Count), 0);
         public IReadOnlyList<ReleaseCandidate> GetReleaseCandidates(int albumId) =>
             releases.TryGetValue(albumId, out var value) ? value : [];
     }

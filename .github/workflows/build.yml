@@ -162,7 +162,7 @@ jobs:
           body: |
             Standalone Lidarr AI Import plugin with an authenticated in-Lidarr workspace for failed-import discovery, source-to-track review, explicit single-use approvals, strict hardlink-only execution, status, and fail-closed per-file reconciliation. No shell workflow, companion service, or separate Lidarr API credentials are required.
 
-            v1.1.4 permits a provenance-bound complete human mapping to override only Lidarr's automatic identification-confidence and track-completeness rejections. Import-safety and library-state rejections still fail closed, as do changed source material, ownership, or non-human mappings.
+            v1.1.5 uses the same reconciled manual-import evidence for discovery, human mapping creation, library addition, and approval. Stale Activity rows proven already imported are excluded consistently, while contradictory evidence and all import-safety or library-state rejections still fail closed.
 
             This release requests strict JSON Schema output from OpenAI-compatible endpoints and optionally sends `enable_thinking=false` for compatible Qwen/llama.cpp servers. Model output remains subject to independent strict validation.
 
