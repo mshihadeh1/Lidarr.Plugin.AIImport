@@ -58,7 +58,10 @@ public sealed class LibraryAdditionService
         if (queueMatches.Length == 0)
             throw new StaleApprovalException("The failed import is no longer present in Lidarr.");
         var queueAlbumId = queueMatches.OrderBy(x => x.Id).First().AlbumId;
-        var files = _gateway.GetManualImports(stored.DownloadId);
+        var scan = _gateway.GetManualImportScan(stored.DownloadId);
+        if (scan.IndeterminateCount != 0)
+            throw new StaleApprovalException("Current Lidarr import evidence is contradictory; reconcile the Activity item and discover again.");
+        var files = scan.Files;
         var albumIds = FailedImportDiscoveryWorkflow.GetCandidateAlbumIds(files, queueAlbumId);
         var candidates = albumIds.SelectMany(_gateway.GetReleaseCandidates)
             .GroupBy(x => x.Id).Select(x => x.First()).OrderBy(x => x.Id).ToArray();
