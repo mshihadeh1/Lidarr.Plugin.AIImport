@@ -84,13 +84,15 @@ In **Settings → Connect**, add and save **AI Import**. Configure:
 - Optional custom system prompt
 - **Disable Model Thinking** for compatible Qwen/llama.cpp endpoints
 
+- **Untracked Download Folders** (optional): absolute folders scanned for albums downloaded outside Lidarr; separate multiple folders with a pipe, comma, or newline. The 25 newest album folders are scanned per discovery. Each root must live on the same filesystem as the destination library root for hardlink import.
+
 Use **Test** before saving. Endpoint credentials remain in Lidarr's provider settings and are not included in workflow state, prompts, action responses, or logs.
 
 ## Using the plugin in Lidarr
 
 1. Open **Settings → Connect → AI Import**.
 2. Press **Open AI Import Workspace**. Lidarr opens an authenticated, same-origin workspace; no shell or separate Lidarr API credentials are needed.
-3. Press **Discover failed imports**. Discovery is read-only and examines queue entries in `importBlocked` or `importFailed`.
+3. Press **Discover failed imports**. Discovery is read-only. It examines queue entries in `importBlocked` or `importFailed`, and—if "Untracked Download Folders" is configured—it also scans those folders for album folders downloaded outside Lidarr (for example straight into the qBittorrent download path, including files renamed by qBittorrent). Each untracked scan appears as its own reviewable analysis with the source folder shown on the card.
 4. Review each source-to-track mapping. If a low-confidence or `manualReview` result has a current verified Lidarr release candidate, choose exactly one target track for every source and press **Create manually reviewed proposal**. This cannot introduce arbitrary IDs or paths and does not approve or import anything.
 5. For a complete `proposed` result—including a manually constructed proposal—check the review acknowledgement and press **Approve reviewed mapping**. Approval does not link files and expires after 15 minutes.
 6. Review the approved plan again, type `IMPORT`, and press **Execute hardlink import**. This is a distinct, single-use action.
@@ -109,6 +111,8 @@ v1.1.3 narrows that exception to rows Lidarr explicitly marks as additional exis
 v1.1.4 lets a provenance-bound complete human mapping override only Lidarr's automatic tag-distance and track-completeness rejections. Import-safety and library-state rejections—including free space, existing imports, upgrades, root folders, and unpacking—still fail closed. Approval errors now identify whether source material, ownership, safety rejection, or automatic mapping changed.
 
 v1.1.5 uses the same reconciled manual-import scan for discovery, human mapping creation, library addition, and approval. Stale Activity rows proven already imported no longer make a newly created human mapping immediately stale; contradictory evidence still fails closed.
+
+v1.2.0 adds **Untracked Download Folders** to the AI Import connect settings. Configured absolute folders are scanned during discovery for albums downloaded outside Lidarr's queue—e.g. files landing directly in the qBittorrent download path (including names renamed by qBittorrent). An untracked folder is eligible when it contains no existing Lidarr track files, its files' tags resolve to at most one Lidarr album, and Lidarr's manual-import review (`/api/v3/import/manual/import`) already assigns the file set to that album. Discovery then reuses the existing verified-candidate pipeline (deterministic first, LLM ranking optional, manual mapping, expiring approval, single-use execution, and reconciliation)—no artist/album add and no manual import are required beforehand. Approval and reconciliation scope untracked sources by folder and album instead of download ID, and the execution payload submits an empty download identity for those files.
 
 ### Downloads for artists not yet in Lidarr
 

@@ -46,19 +46,32 @@ public sealed class DirectLidarrReconciliationClient : ILidarrReconciliationClie
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (string.IsNullOrWhiteSpace(downloadId)) throw new ArgumentException("Download ID is required.", nameof(downloadId));
         if (albumId <= 0) throw new ArgumentOutOfRangeException(nameof(albumId));
-        var records = _history.Find(downloadId, EntityHistoryEventType.TrackFileImported)
-            .Where(x => x.AlbumId == albumId).OrderByDescending(x => x.Date).ToArray();
-        if (records.Length > 100)
-            throw new InvalidDataException("Lidarr reconciliation history exceeded its safety bound.");
+        EntityHistory[] records;
+        var untracked = string.IsNullOrWhiteSpace(downloadId);
+        if (untracked)
+        {
+            // Manual imports of files outside Lidarr's queue carry no download ID, so the
+            // history must be scoped by album instead of by download.
+            records = _history.GetByAlbum(albumId, EntityHistoryEventType.TrackFileImported)
+                .OrderByDescending(x => x.Date).ToArray();
+            if (records.Length > 500)
+                throw new InvalidDataException("Lidarr reconciliation history exceeded its safety bound.");
+        }
+        else
+        {
+            records = _history.Find(downloadId, EntityHistoryEventType.TrackFileImported)
+                .Where(x => x.AlbumId == albumId).OrderByDescending(x => x.Date).ToArray();
+            if (records.Length > 100)
+                throw new InvalidDataException("Lidarr reconciliation history exceeded its safety bound.");
+        }
         IReadOnlyList<LidarrImportHistoryEvidence> result = records.Select(item =>
             new LidarrImportHistoryEvidence(
                 RequiredPositive(item.Id, "history ID"),
                 RequiredPositive(item.ArtistId, "artist ID"),
                 RequiredPositive(item.AlbumId, "album ID"),
                 RequiredPositive(item.TrackId, "track ID"),
-                RequiredText(item.DownloadId, "download ID"),
+                untracked ? item.DownloadId ?? string.Empty : RequiredText(item.DownloadId, "download ID"),
                 new DateTimeOffset(DateTime.SpecifyKind(item.Date, DateTimeKind.Utc)),
                 ParsePositive(item.Data, "fileId"),
                 RequiredData(item.Data, "droppedPath"),

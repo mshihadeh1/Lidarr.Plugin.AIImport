@@ -21,7 +21,7 @@ public sealed class LibraryAdditionServiceTests
         var gateway = new StubGateway([new QueueCandidate(1, null, "failed", TrackedImportState.ImportFailed, "download")], [source]);
         var store = new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json"));
         var proposal = new MatchProposal(1, ProposalStatus.ManualReview, null, null, null, 0m, "No Lidarr candidate.", []);
-        var analysisId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", null, [source], [], proposal);
+        var analysisId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", AiImportSourceKinds.Queue, null, [source], [], proposal);
         store.Replace([new StoredStandaloneAnalysis(analysisId, "download", proposal)]);
         var client = new StubClient();
         Assert.Throws<ArgumentException>(() =>
@@ -50,7 +50,7 @@ public sealed class LibraryAdditionServiceTests
         var gateway = new StubGateway([new QueueCandidate(1, null, "failed", TrackedImportState.ImportFailed, "download")], sources);
         var store = new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json"));
         var proposal = new MatchProposal(1, ProposalStatus.ManualReview, null, null, null, 0m, "No Lidarr candidate.", []);
-        var analysisId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", null, sources, [], proposal);
+        var analysisId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", AiImportSourceKinds.Queue, null, sources, [], proposal);
         store.Replace([new StoredStandaloneAnalysis(analysisId, "download", proposal)]);
         var client = new StubClient();
 
@@ -71,6 +71,50 @@ public sealed class LibraryAdditionServiceTests
         });
     }
 
+    [Test]
+    public void Untracked_folder_analysis_allows_library_addition_without_a_queue_row()
+    {
+        using var temp = new TempDirectory();
+        var folder = Path.Combine(temp.Path, "New Artist", "New Album");
+        var source = Source();
+        var gateway = new StubGateway([], []);
+        gateway.UntrackedScans[folder] = new([source], 0, 0);
+        var store = new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json"));
+        var proposal = new MatchProposal(1, ProposalStatus.ManualReview, null, null, null, 0m, "No Lidarr candidate.", []);
+        var analysisId = FailedImportDiscoveryWorkflow.ComputeAnalysisId(
+            folder, AiImportSourceKinds.Folder, null, [source], [], proposal);
+        store.Replace([new StoredStandaloneAnalysis(analysisId, string.Empty, proposal) { FolderPath = folder }]);
+        var client = new StubClient();
+
+        var created = new LibraryAdditionService(store, gateway, client).Add(analysisId, 2, 3, 4, "ADD");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.Request, Is.EqualTo(new LibraryAdditionRequest(ArtistMbId, AlbumMbId, ReleaseMbId, 2, 3, 4)));
+            Assert.That(created.ArtistId, Is.EqualTo(5));
+            Assert.That(created.AlbumId, Is.EqualTo(10));
+        });
+    }
+
+    [Test]
+    public void Untracked_folder_addition_requires_the_current_folder_scan()
+    {
+        using var temp = new TempDirectory();
+        var folder = Path.Combine(temp.Path, "New Artist", "New Album");
+        var source = Source();
+        var gateway = new StubGateway([], []);
+        gateway.UntrackedScans[folder] = new([source], 0, 0);
+        var store = new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json"));
+        var proposal = new MatchProposal(1, ProposalStatus.ManualReview, null, null, null, 0m, "No Lidarr candidate.", []);
+        var analysisId = FailedImportDiscoveryWorkflow.ComputeAnalysisId(
+            folder, AiImportSourceKinds.Folder, null, [source], [], proposal);
+        store.Replace([new StoredStandaloneAnalysis(analysisId, string.Empty, proposal) { FolderPath = folder }]);
+        gateway.UntrackedScans[folder] = new([source, Source() with { Id = "source-2" }], 0, 0);
+
+        Assert.Throws<StaleApprovalException>(() =>
+            new LibraryAdditionService(store, gateway, new StubClient()).Add(analysisId, 2, 3, 4, "ADD"));
+    }
+
     private static SourceFileCandidate Source() =>
         new("source-1", "01 Song.flac", "New Artist", "New Album", "Song", 1, [1], 180000,
             null, [], null, null, ArtistMbId, AlbumMbId, ReleaseMbId);
@@ -79,9 +123,13 @@ public sealed class LibraryAdditionServiceTests
         IReadOnlyList<QueueCandidate> queue,
         IReadOnlyList<SourceFileCandidate> files) : IInProcessLidarrGateway
     {
+        public Dictionary<string, ManualImportScanResult> UntrackedScans { get; } =
+            new(StringComparer.Ordinal);
         public string Version => FailedImportDiscoveryWorkflow.CompatibleLidarrVersion;
         public IReadOnlyList<QueueCandidate> GetTrackedDownloads() => queue;
         public IReadOnlyList<SourceFileCandidate> GetManualImports(string downloadId) => files;
+        public ManualImportScanResult GetUntrackedManualImportScan(string folderPath) =>
+            UntrackedScans.TryGetValue(folderPath, out var scan) ? scan : new ManualImportScanResult([], 0, 0);
         public IReadOnlyList<ReleaseCandidate> GetReleaseCandidates(int albumId) => [];
     }
 

@@ -22,6 +22,7 @@ public interface IInProcessLidarrGateway
     IReadOnlyList<SourceFileCandidate> GetManualImports(string downloadId);
     ManualImportScanResult GetManualImportScan(string downloadId) =>
         new(GetManualImports(downloadId), 0, 0);
+    ManualImportScanResult GetUntrackedManualImportScan(string folderPath);
     IReadOnlyList<ReleaseCandidate> GetReleaseCandidates(int albumId);
 }
 
@@ -169,6 +170,60 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
         }
 
         return new ManualImportScanResult(result, alreadyImported, indeterminate);
+    }
+
+    public ManualImportScanResult GetUntrackedManualImportScan(string folderPath)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath) || !Path.IsPathFullyQualified(folderPath))
+        {
+            throw new ArgumentException("An absolute scan folder is required.", nameof(folderPath));
+        }
+        if (!Directory.Exists(folderPath))
+        {
+            throw new DirectoryNotFoundException("The scan folder no longer exists.");
+        }
+
+        var result = _manualImports
+            .GetMediaFiles(folderPath, null, null, FilterFilesType.None, false)
+            .Where(x => string.IsNullOrWhiteSpace(x.DownloadId))
+            .Select(file =>
+            {
+                var tags = file.Tags;
+                return new SourceFileCandidate(
+                    OpaqueSourceId(folderPath, file.Path),
+                    file.Name ?? Path.GetFileName(file.Path),
+                    tags?.ArtistTitle ?? file.Artist?.Name ?? string.Empty,
+                    tags?.AlbumTitle ?? file.Album?.Title ?? string.Empty,
+                    tags?.Title ?? string.Empty,
+                    tags?.DiscNumber ?? 0,
+                    tags?.TrackNumbers ?? Array.Empty<int>(),
+                    tags is null ? 0 : checked((int)Math.Min(int.MaxValue, tags.Duration.TotalMilliseconds)),
+                    NullIfBlank(tags?.TrackMBId),
+                    file.Rejections?.Select(x => x.Reason).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray() ?? Array.Empty<string>(),
+                    file.Artist?.Id > 0 ? file.Artist.Id : null,
+                    file.Album?.Id > 0 ? file.Album.Id : null,
+                    NullIfBlank(tags?.ArtistMBId),
+                    NullIfBlank(tags?.AlbumMBId),
+                    NullIfBlank(tags?.ReleaseMBId),
+                    NullIfBlank(tags?.RecordingMBId))
+                {
+                    SourcePath = file.Path,
+                    Quality = JsonSerializer.SerializeToNode(file.Quality)?.AsObject()
+                        ?? throw new InvalidDataException("Lidarr manual-import quality is missing."),
+                    IndexerFlags = file.IndexerFlags,
+                    DownloadId = null,
+                    Size = file.Size,
+                    ManualImportId = file.Id
+                };
+            })
+            .ToArray();
+
+        if (result.Select(x => x.Id).Distinct(StringComparer.Ordinal).Count() != result.Length)
+        {
+            throw new InvalidDataException("Lidarr returned duplicate manual-import source identities.");
+        }
+
+        return new ManualImportScanResult(result, 0, 0);
     }
 
     internal static IReadOnlyList<ManualImportItem> FilterPendingDownloadFiles(

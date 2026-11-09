@@ -318,7 +318,10 @@
     card.appendChild(element('span', `  Confidence ${formatConfidence(analysis.proposal.confidence)}`, 'muted'));
     card.appendChild(element('p', analysis.proposal.explanation));
 
-    const meta = element('p', `${(analysis.files || []).length} source file(s) · ${(analysis.candidates || []).length} verified release candidate(s) · ${analysis.usedLlm ? 'LLM ranking used' : 'deterministic only'}`, 'muted');
+    const sourceLabel = analysis.folderPath
+      ? `untracked folder ${analysis.folderPath}`
+      : (analysis.downloadId ? `queue download ${analysis.downloadId}` : 'no tracked download');
+    const meta = element('p', `${sourceLabel} · ${(analysis.files || []).length} source file(s) · ${(analysis.candidates || []).length} verified release candidate(s) · ${analysis.usedLlm ? 'LLM ranking used' : 'deterministic only'}`, 'muted');
     card.appendChild(meta);
 
     if (!proposed) {
@@ -417,7 +420,7 @@
         `${item.message} Already imported: ${item.alreadyImportedCount}; indeterminate: ${item.indeterminateCount}.`,
         item.indeterminateCount ? 'error' : 'muted')));
       analyses.forEach(x => results.appendChild(renderAnalysis(x)));
-      if (!analyses.length && !diagnostics.length) results.appendChild(element('p', 'No Import Blocked or Import Failed queue items were found.', 'muted'));
+      if (!analyses.length && !diagnostics.length) results.appendChild(element('p', 'No Import Blocked/Failed queue items or untracked download folders were found.', 'muted'));
     } catch (error) {
       summary.textContent = `Discovery failed: ${error.message}`; summary.className = 'summary error';
     } finally { discoverButton.disabled = false; }

@@ -33,6 +33,9 @@ public sealed class AiImportSettings : IProviderConfig
     [FieldDefinition(7, Label = "Disable Model Thinking", Type = FieldType.Checkbox, Advanced = true, HelpText = "Send enable_thinking=false to compatible local endpoints such as llama.cpp serving Qwen reasoning models")]
     public bool DisableThinking { get; set; }
 
+    [FieldDefinition(8, Label = "Untracked Download Folders", Type = FieldType.Textbox, HelpText = "Optional. Absolute folders to scan for albums downloaded outside Lidarr (e.g. directly in the qBittorrent download path). Separate multiple folders with a pipe, comma, or newline. The 25 newest album folders are scanned per discovery.")]
+    public string ScanRoots { get; set; } = string.Empty;
+
     [FieldDefinition(99, Label = "Open AI Import Workspace", Type = FieldType.OAuth, HelpText = "Open the in-Lidarr discovery, review, approval, execution, status, and reconciliation workspace")]
     public string Workspace { get; set; } = string.Empty;
 
@@ -51,8 +54,19 @@ public sealed class AiImportSettingsValidator : AbstractValidator<AiImportSettin
                            string.IsNullOrEmpty(uri.Fragment))
             .WithMessage("API Base URL must be an absolute HTTP or HTTPS URL without credentials, query, or fragment");
         RuleFor(x => x.Model).NotEmpty();
+        RuleFor(x => x.ScanRoots)
+            .Must(value => SplitScanRoots(value).All(x => Path.IsPathFullyQualified(x)))
+            .WithMessage("Untracked download folders must be absolute paths");
         RuleFor(x => x.Temperature).InclusiveBetween(0m, 2m);
         RuleFor(x => x.RequestTimeoutSeconds).InclusiveBetween(1, 600);
         RuleFor(x => x.MaximumOutputTokens).InclusiveBetween(1, 1000000);
     }
+
+    internal static string[] SplitScanRoots(string value) =>
+        (value ?? string.Empty)
+            .Split(['\n', ',', '|', ';'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim())
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 }

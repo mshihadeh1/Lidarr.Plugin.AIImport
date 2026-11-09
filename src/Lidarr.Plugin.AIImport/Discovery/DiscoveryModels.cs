@@ -4,6 +4,12 @@ using System.Text.Json.Serialization;
 
 namespace Lidarr.Plugin.AIImport.Discovery;
 
+public static class AiImportSourceKinds
+{
+    public const string Queue = "queue";
+    public const string Folder = "folder";
+}
+
 public enum TrackedImportState
 {
     Other,
@@ -114,4 +120,6 @@ public sealed record AiImportAnalysisDto(
     IReadOnlyList<SourceFileDto> Files,
     IReadOnlyList<ReleaseCandidateDto> Candidates,
     bool UsedLlm,
-    LibraryAdditionDto? LibraryAddition = null);
+    LibraryAdditionDto? LibraryAddition = null,
+    string SourceKind = AiImportSourceKinds.Queue,
+    string? FolderPath = null);

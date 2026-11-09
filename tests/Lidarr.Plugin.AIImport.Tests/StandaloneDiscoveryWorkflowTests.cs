@@ -4,6 +4,7 @@ using Lidarr.Plugin.AIImport.Discovery;
 using Lidarr.Plugin.AIImport.Lidarr;
 using Lidarr.Plugin.AIImport.Matching;
 using Lidarr.Plugin.AIImport.Workflows;
+using System.Text.Json.Nodes;
 
 namespace Lidarr.Plugin.AIImport.Tests;
 
@@ -210,6 +211,69 @@ public sealed class StandaloneDiscoveryWorkflowTests
         });
     }
 
+    [Test]
+    public void Discovery_scans_untracked_download_folders_for_albums_outside_the_queue()
+    {
+        using var temp = new TempDirectory();
+        var rootPath = temp.Path;
+        var albumDir = Path.Combine(rootPath, "Artist", "Album");
+        Directory.CreateDirectory(albumDir);
+        var filePath = Path.Combine(albumDir, "01 - Song.flac");
+        File.WriteAllText(filePath, "");
+        var files = new[]
+        {
+            Source("untracked-a") with
+            {
+                SourcePath = filePath,
+                Quality = new JsonObject { ["quality"] = "Lossless" },
+                Size = 12345,
+                ManualImportId = 1,
+                DownloadId = null
+            }
+        };
+        var gateway = new FakeGateway(
+            [new QueueCandidate(1, 99, "queue", TrackedImportState.ImportFailed, "queue")],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>> { ["queue"] = [] },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release()] },
+            untrackedScans: new Dictionary<string, ManualImportScanResult>
+            {
+                [albumDir] = new(files, 0, 0)
+            });
+        var settings = Settings();
+        settings.ScanRoots = rootPath;
+
+        var result = new FailedImportDiscoveryWorkflow(gateway, new DeterministicMatcher(), null).Discover(settings);
+        var dto = result.Analyses.Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(dto.FolderPath, Is.EqualTo(albumDir));
+            Assert.That(dto.DownloadId, Is.EqualTo(string.Empty));
+            Assert.That(dto.Proposal.Status, Is.EqualTo(ProposalStatus.Proposed));
+            Assert.That(dto.Proposal.ArtistId, Is.EqualTo(5));
+            Assert.That(dto.Proposal.AlbumId, Is.EqualTo(10));
+            Assert.That(dto.Proposal.ReleaseId, Is.EqualTo(101));
+            Assert.That(gateway.UntrackedScanFolders, Is.EqualTo(new[] { albumDir }));
+        });
+    }
+
+    [Test]
+    public void Discovery_scanning_an_empty_untracked_root_yields_no_analyses()
+    {
+        using var temp = new TempDirectory();
+        var settings = Settings();
+        settings.ScanRoots = temp.Path;
+
+        var result = new FailedImportDiscoveryWorkflow(
+            new FakeGateway(
+                [],
+                new Dictionary<string, IReadOnlyList<SourceFileCandidate>>(),
+                new Dictionary<int, IReadOnlyList<ReleaseCandidate>>()),
+            new DeterministicMatcher(), null).Discover(settings);
+
+        Assert.That(result.Analyses, Is.Empty);
+    }
+
     private static AiImportSettings Settings() => new()
     {
         ApiBaseUrl = "https://saved.example/v1",
@@ -229,10 +293,12 @@ public sealed class StandaloneDiscoveryWorkflowTests
         IReadOnlyDictionary<string, IReadOnlyList<SourceFileCandidate>> sources,
         IReadOnlyDictionary<int, IReadOnlyList<ReleaseCandidate>> releases,
         IReadOnlySet<string>? vanishedDownloads = null,
-        IReadOnlyDictionary<string, (int Imported, int Indeterminate)>? scanCounts = null) : IInProcessLidarrGateway
+        IReadOnlyDictionary<string, (int Imported, int Indeterminate)>? scanCounts = null,
+        IReadOnlyDictionary<string, ManualImportScanResult>? untrackedScans = null) : IInProcessLidarrGateway
     {
         public List<string> ManualImportDownloadIds { get; } = [];
         public List<int> ReleaseAlbumIds { get; } = [];
+        public List<string> UntrackedScanFolders { get; } = [];
         public string Version => FailedImportDiscoveryWorkflow.CompatibleLidarrVersion;
         public IReadOnlyList<QueueCandidate> GetTrackedDownloads() => queue;
         public IReadOnlyList<SourceFileCandidate> GetManualImports(string downloadId)
@@ -248,6 +314,13 @@ public sealed class StandaloneDiscoveryWorkflowTests
             return scanCounts is not null && scanCounts.TryGetValue(downloadId, out var counts)
                 ? new ManualImportScanResult(files, counts.Imported, counts.Indeterminate)
                 : new ManualImportScanResult(files, 0, 0);
+        }
+        public ManualImportScanResult GetUntrackedManualImportScan(string folderPath)
+        {
+            UntrackedScanFolders.Add(folderPath);
+            return untrackedScans is not null && untrackedScans.TryGetValue(folderPath, out var scan)
+                ? scan
+                : new ManualImportScanResult([], 0, 0);
         }
         public IReadOnlyList<ReleaseCandidate> GetReleaseCandidates(int albumId)
         {

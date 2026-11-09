@@ -24,7 +24,8 @@ public sealed record ApprovedImportPlan(
     IReadOnlyList<ApprovedImportFile> Files,
     string DestinationRoot = "",
     bool HumanOverride = false,
-    string? ParentAnalysisId = null);
+    string? ParentAnalysisId = null,
+    string? FolderPath = null);
 
 public interface IApprovedPlanProvider
 {

@@ -11,7 +11,8 @@ public sealed record StoredStandaloneAnalysis(
     MatchProposal Proposal,
     bool HumanOverride = false,
     string? ParentAnalysisId = null,
-    DateTimeOffset? ExpiresAt = null);
+    DateTimeOffset? ExpiresAt = null,
+    string? FolderPath = null);
 
 public sealed class StandaloneAnalysisStore
 {
@@ -95,7 +96,8 @@ public sealed class StandaloneAnalysisStore
     private static void Validate(IReadOnlyList<StoredStandaloneAnalysis> analyses)
     {
         if (analyses.Select(x => x.AnalysisId).Distinct(StringComparer.Ordinal).Count() != analyses.Count ||
-            analyses.Any(x => string.IsNullOrWhiteSpace(x.AnalysisId) || string.IsNullOrWhiteSpace(x.DownloadId) ||
+            analyses.Any(x => string.IsNullOrWhiteSpace(x.AnalysisId) ||
+                (string.IsNullOrWhiteSpace(x.DownloadId) && string.IsNullOrWhiteSpace(x.FolderPath)) ||
                 (x.HumanOverride && (string.IsNullOrWhiteSpace(x.ParentAnalysisId) || x.ExpiresAt is null))))
             throw new InvalidDataException("Standalone analyses must have unique, complete identities.");
     }

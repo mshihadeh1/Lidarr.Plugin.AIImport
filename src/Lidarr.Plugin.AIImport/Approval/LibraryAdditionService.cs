@@ -52,13 +52,28 @@ public sealed class LibraryAdditionService
         if (metadataProfileId <= 0) throw new ArgumentOutOfRangeException(nameof(metadataProfileId));
 
         var stored = _analyses.GetRequired(analysisId);
-        var queueMatches = _gateway.GetTrackedDownloads().Where(x =>
-            string.Equals(x.DownloadId, stored.DownloadId, StringComparison.Ordinal) &&
-            x.State is TrackedImportState.ImportBlocked or TrackedImportState.ImportFailed).ToArray();
-        if (queueMatches.Length == 0)
-            throw new StaleApprovalException("The failed import is no longer present in Lidarr.");
-        var queueAlbumId = queueMatches.OrderBy(x => x.Id).First().AlbumId;
-        var scan = _gateway.GetManualImportScan(stored.DownloadId);
+        int? queueAlbumId;
+        ManualImportScanResult scan;
+        var sourceId = stored.DownloadId;
+        var sourceKind = AiImportSourceKinds.Queue;
+        if (stored.FolderPath is not null)
+        {
+            // Untracked folder sources have no queue row to re-verify against.
+            sourceId = stored.FolderPath;
+            sourceKind = AiImportSourceKinds.Folder;
+            scan = _gateway.GetUntrackedManualImportScan(stored.FolderPath);
+            queueAlbumId = null;
+        }
+        else
+        {
+            var queueMatches = _gateway.GetTrackedDownloads().Where(x =>
+                string.Equals(x.DownloadId, stored.DownloadId, StringComparison.Ordinal) &&
+                x.State is TrackedImportState.ImportBlocked or TrackedImportState.ImportFailed).ToArray();
+            if (queueMatches.Length == 0)
+                throw new StaleApprovalException("The failed import is no longer present in Lidarr.");
+            queueAlbumId = queueMatches.OrderBy(x => x.Id).First().AlbumId;
+            scan = _gateway.GetManualImportScan(stored.DownloadId);
+        }
         if (scan.IndeterminateCount != 0)
             throw new StaleApprovalException("Current Lidarr import evidence is contradictory; reconcile the Activity item and discover again.");
         var files = scan.Files;
@@ -66,7 +81,7 @@ public sealed class LibraryAdditionService
         var candidates = albumIds.SelectMany(_gateway.GetReleaseCandidates)
             .GroupBy(x => x.Id).Select(x => x.First()).OrderBy(x => x.Id).ToArray();
         var currentId = FailedImportDiscoveryWorkflow.ComputeAnalysisId(
-            stored.DownloadId, queueAlbumId, files, candidates, stored.Proposal);
+            sourceId, sourceKind, queueAlbumId, files, candidates, stored.Proposal);
         if (!string.Equals(currentId, analysisId, StringComparison.Ordinal))
             throw new StaleApprovalException("The analysis no longer matches current Lidarr or source state.");
         if (candidates.Length != 0)

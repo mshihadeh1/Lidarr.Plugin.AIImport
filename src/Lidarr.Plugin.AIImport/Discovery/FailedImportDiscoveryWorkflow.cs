@@ -11,6 +11,12 @@ namespace Lidarr.Plugin.AIImport.Discovery;
 public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
 {
     public const string CompatibleLidarrVersion = "3.1.2.4913";
+    public const int MaxUntrackedFoldersPerScan = 25;
+
+    private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".flac", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".aif", ".aiff", ".ape", ".wv", ".alac"
+    };
 
     private readonly IInProcessLidarrGateway _gateway;
     private readonly DeterministicMatcher _matcher;
@@ -58,7 +64,10 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         {
             try
             {
-                var analysis = Analyze(item, settings, out var diagnostic);
+                var scan = _gateway.GetManualImportScan(item.DownloadId);
+                var analysis = AnalyzeScan(
+                    scan, item.DownloadId, null, AiImportSourceKinds.Queue, item.Title, item.AlbumId, settings,
+                    out var diagnostic);
                 if (diagnostic is not null) diagnostics.Add(diagnostic);
                 if (analysis is not null) analyses.Add(analysis);
             }
@@ -68,29 +77,160 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                 // Skip only that stale item; never let it hide other independently reviewable candidates.
             }
         }
+
+        var folderAnalyses = ScanUntrackedFolders(settings, diagnostics);
+        analyses.AddRange(folderAnalyses);
+
         _analysisStore?.Replace(analyses.Select(x =>
-            new StoredStandaloneAnalysis(x.AnalysisId, x.DownloadId, x.Proposal)).ToArray());
+            new StoredStandaloneAnalysis(x.AnalysisId, x.DownloadId, x.Proposal)
+            {
+                FolderPath = x.FolderPath
+            }).ToArray());
         return new AiImportDiscoverResult(analyses.ToArray(), diagnostics.ToArray());
     }
 
-    private AiImportAnalysisDto? Analyze(
-        QueueCandidate item,
+    private List<AiImportAnalysisDto> ScanUntrackedFolders(
+        AiImportSettings settings,
+        List<AiImportDiscoveryDiagnostic> diagnostics)
+    {
+        var roots = AiImportSettingsValidator.SplitScanRoots(settings.ScanRoots);
+        var analyses = new List<AiImportAnalysisDto>();
+        foreach (var root in roots)
+        {
+            if (!Path.IsPathFullyQualified(root))
+            {
+                diagnostics.Add(new AiImportDiscoveryDiagnostic(root, 0, 0, "Skipped: untracked scan folder must be an absolute path."));
+                continue;
+            }
+            if (!Directory.Exists(root))
+            {
+                diagnostics.Add(new AiImportDiscoveryDiagnostic(root, 0, 0, "Skipped: untracked scan folder does not exist."));
+                continue;
+            }
+
+            var candidates = EnumerateCandidateAlbumFolders(root)
+                .ToArray();
+            var capped = candidates
+                .OrderByDescending(x => SafeLastWriteTimeUtc(x))
+                .Take(MaxUntrackedFoldersPerScan)
+                .ToArray();
+            if (capped.Length < candidates.Length)
+            {
+                diagnostics.Add(new AiImportDiscoveryDiagnostic(root, 0, 0,
+                    $"Scanned the {MaxUntrackedFoldersPerScan} newest album folders; {candidates.Length - capped.Length} older folders were skipped. Move finished albums out of the scan folder to import them."));
+            }
+
+            foreach (var folder in capped)
+            {
+                try
+                {
+                    var scan = _gateway.GetUntrackedManualImportScan(folder);
+                    var analysis = AnalyzeScan(
+                        scan, string.Empty, folder, AiImportSourceKinds.Folder,
+                        Path.GetFileName(folder.TrimEnd('/', '\\')), null, settings, out var diagnostic);
+                    if (diagnostic is not null) diagnostics.Add(diagnostic);
+                    if (analysis is not null) analyses.Add(analysis);
+                }
+                catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException or InvalidDataException)
+                {
+                    diagnostics.Add(new AiImportDiscoveryDiagnostic(folder, 0, 0,
+                        $"Skipped {Path.GetFileName(folder)}: {exception.Message}"));
+                }
+            }
+        }
+        return analyses;
+    }
+
+    internal static IEnumerable<string> EnumerateCandidateAlbumFolders(string root)
+    {
+        var folders = new List<string>();
+        foreach (var sub in SafeEnumerateDirectories(root))
+        {
+            folders.Add(sub);
+            foreach (var nested in SafeEnumerateDirectories(sub))
+            {
+                folders.Add(nested);
+            }
+        }
+        return folders
+            .Where(ContainsTopLevelAudioFile)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal);
+    }
+
+    private static bool ContainsTopLevelAudioFile(string folder)
+    {
+        if (!Directory.Exists(folder)) return false;
+        var files = SafeEnumerateFiles(folder);
+        var inspected = 0;
+        foreach (var file in files)
+        {
+            if (Path.GetExtension(file).Length > 0 && AudioExtensions.Contains(Path.GetExtension(file)))
+                return true;
+            if (++inspected >= 500) break;
+        }
+        return false;
+    }
+
+    private static DateTime SafeLastWriteTimeUtc(string path)
+    {
+        try
+        {
+            return Directory.Exists(path) ? Directory.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+        }
+        catch (Exception)
+        {
+            return DateTime.MinValue;
+        }
+    }
+
+    private static IEnumerable<string> SafeEnumerateDirectories(string path)
+    {
+        try
+        {
+            return Directory.EnumerateDirectories(path);
+        }
+        catch (Exception)
+        {
+            return [];
+        }
+    }
+
+    private static IEnumerable<string> SafeEnumerateFiles(string path)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(path);
+        }
+        catch (Exception)
+        {
+            return [];
+        }
+    }
+
+    private AiImportAnalysisDto? AnalyzeScan(
+        ManualImportScanResult scan,
+        string downloadId,
+        string? folderPath,
+        string sourceKind,
+        string title,
+        int? queueAlbumId,
         AiImportSettings settings,
         out AiImportDiscoveryDiagnostic? diagnostic)
     {
-        var scan = _gateway.GetManualImportScan(item.DownloadId);
         var files = scan.Files;
+        var sourceId = string.IsNullOrWhiteSpace(downloadId) ? folderPath ?? string.Empty : downloadId;
         diagnostic = scan.AlreadyImportedCount == 0 && scan.IndeterminateCount == 0
             ? null
             : new AiImportDiscoveryDiagnostic(
-                item.DownloadId,
+                sourceId,
                 scan.AlreadyImportedCount,
                 scan.IndeterminateCount,
                 scan.IndeterminateCount == 0
                     ? "Files already imported as verified hardlinks were excluded."
                     : "Files with contradictory import evidence were excluded and require Lidarr reconciliation.");
         if (files.Count == 0) return null;
-        var albumIds = GetCandidateAlbumIds(files, item.AlbumId);
+        var albumIds = GetCandidateAlbumIds(files, queueAlbumId);
         var candidates = albumIds.SelectMany(_gateway.GetReleaseCandidates)
             .GroupBy(x => x.Id)
             .Select(x => x.First())
@@ -130,14 +270,16 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                 track.Id, track.Title, track.DiscNumber, track.TrackNumber, track.DurationMs, track.HasFile)).ToArray())).ToArray();
         var libraryAddition = candidates.Length == 0 ? GetLibraryAddition(files) : null;
         return new AiImportAnalysisDto(
-            ComputeAnalysisId(item.DownloadId, item.AlbumId, files, candidates, proposal),
-            item.DownloadId,
-            item.Title,
+            ComputeAnalysisId(sourceId, sourceKind, queueAlbumId, files, candidates, proposal),
+            downloadId,
+            title,
             proposal,
             safeFiles,
             safeCandidates,
             usedLlm,
-            libraryAddition);
+            libraryAddition,
+            sourceKind,
+            folderPath);
     }
 
     internal static LibraryAdditionDto? GetLibraryAddition(IReadOnlyList<SourceFileCandidate> files)
@@ -188,7 +330,8 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         new(1, ProposalStatus.ManualReview, null, null, null, confidence, explanation, Array.Empty<TrackProposal>());
 
     public static string ComputeAnalysisId(
-        string downloadId,
+        string sourceId,
+        string sourceKind,
         int? queueAlbumId,
         IReadOnlyList<SourceFileCandidate> files,
         IReadOnlyList<ReleaseCandidate> candidates,
@@ -196,8 +339,9 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
     {
         var snapshot = new
         {
-            version = 3,
-            downloadId,
+            version = 4,
+            sourceId,
+            sourceKind,
             queueAlbumId,
             files = files.OrderBy(x => x.Id, StringComparer.Ordinal).Select(x => new
             {

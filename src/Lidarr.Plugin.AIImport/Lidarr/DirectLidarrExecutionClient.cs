@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Lidarr.Plugin.AIImport.Approval;
+using Lidarr.Plugin.AIImport.Discovery;
 using NzbDrone.Core.MediaFiles.TrackImport;
 using NzbDrone.Core.MediaFiles.TrackImport.Manual;
 using NzbDrone.Core.Messaging.Commands;
@@ -52,7 +53,20 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
         ArgumentNullException.ThrowIfNull(plan);
         cancellationToken.ThrowIfCancellationRequested();
         _safety.CaptureFingerprint();
-        var current = _gateway.GetManualImports(plan.DownloadId);
+        IReadOnlyList<SourceFileCandidate> current;
+        if (plan.FolderPath is not null)
+        {
+            // Untracked folder sources are revalidated through the same reconciled
+            // manual-import scan used by discovery and approval.
+            var scan = _gateway.GetUntrackedManualImportScan(plan.FolderPath);
+            if (scan.IndeterminateCount != 0)
+                throw new StaleApprovalException("Current Lidarr import evidence is contradictory; reconcile and discover again.");
+            current = scan.Files;
+        }
+        else
+        {
+            current = _gateway.GetManualImports(plan.DownloadId);
+        }
         if (current.Count != plan.Files.Count)
             throw new StaleApprovalException("Lidarr manual-import revalidation returned an unexpected file count.");
         var byPath = current.ToDictionary(x => x.SourcePath ?? string.Empty, StringComparer.Ordinal);
@@ -60,7 +74,7 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
         {
             if (!byPath.TryGetValue(approved.SourcePath, out var item) || item.ManualImportId != approved.ManualImportId ||
                 item.Size != approved.Size || item.IndexerFlags != approved.IndexerFlags ||
-                !string.Equals(item.DownloadId, approved.DownloadId, StringComparison.Ordinal) ||
+                !string.Equals(item.DownloadId ?? string.Empty, approved.DownloadId, StringComparison.Ordinal) ||
                 item.Quality is null || !JsonNode.DeepEquals(item.Quality, approved.Quality))
                 throw new StaleApprovalException("Lidarr manual-import material changed.");
         }
@@ -82,7 +96,7 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
             Quality = JsonSerializer.Deserialize<QualityModel>(file.Quality.ToJsonString())
                 ?? throw new InvalidDataException("Approved quality is malformed."),
             IndexerFlags = file.IndexerFlags,
-            DownloadId = file.DownloadId,
+            DownloadId = string.IsNullOrWhiteSpace(file.DownloadId) ? null : file.DownloadId,
             ReplaceExistingFiles = false,
             DisableReleaseSwitching = false
         }).ToList());
@@ -139,7 +153,7 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
     {
         return item.Id == approved.ManualImportId &&
                string.Equals(item.Path, approved.SourcePath, StringComparison.Ordinal) &&
-               string.Equals(item.DownloadId, approved.DownloadId, StringComparison.Ordinal) &&
+               string.Equals(item.DownloadId ?? string.Empty, approved.DownloadId, StringComparison.Ordinal) &&
                item.Size == approved.Size && item.IndexerFlags == approved.IndexerFlags &&
                !item.AdditionalFile && !item.ReplaceExistingFiles && !item.DisableReleaseSwitching &&
                item.Quality is not null &&
@@ -225,7 +239,7 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
                 Quality = JsonSerializer.Deserialize<QualityModel>(file.Quality.ToJsonString())
                     ?? throw new InvalidDataException("Approved quality is malformed."),
                 IndexerFlags = file.IndexerFlags,
-                DownloadId = file.DownloadId,
+                DownloadId = string.IsNullOrWhiteSpace(file.DownloadId) ? null : file.DownloadId,
                 DisableReleaseSwitching = false
             }).ToList()
         };

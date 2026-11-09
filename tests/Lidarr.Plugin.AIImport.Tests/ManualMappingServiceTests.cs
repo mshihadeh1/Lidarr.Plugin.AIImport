@@ -26,7 +26,7 @@ public sealed class ManualMappingServiceTests
         };
         var store = new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json"));
         var manual = new MatchProposal(1, ProposalStatus.ManualReview, null, null, null, 0m, "Human review required.", []);
-        var originalId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", 10, [source], releases[10], manual);
+        var originalId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", AiImportSourceKinds.Queue, 10, [source], releases[10], manual);
         store.Replace([new StoredStandaloneAnalysis(originalId, "download", manual)]);
         var service = new ManualMappingService(store, gateway);
 
@@ -60,7 +60,7 @@ public sealed class ManualMappingServiceTests
             [source], releases);
         var store = new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json"));
         var manual = new MatchProposal(1, ProposalStatus.ManualReview, null, null, null, 0m, "Human review required.", []);
-        var originalId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", 10, [source], releases[10], manual);
+        var originalId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", AiImportSourceKinds.Queue, 10, [source], releases[10], manual);
         store.Replace([new StoredStandaloneAnalysis(originalId, "download", manual)]);
 
         Assert.Throws<ProposalValidationException>(() => new ManualMappingService(store, gateway)
@@ -78,7 +78,7 @@ public sealed class ManualMappingServiceTests
             [source], releases);
         var store = new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json"));
         var manual = new MatchProposal(1, ProposalStatus.ManualReview, null, null, null, 0m, "review", []);
-        var originalId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", 10, [source], releases[10], manual);
+        var originalId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", AiImportSourceKinds.Queue, 10, [source], releases[10], manual);
         store.Replace([new StoredStandaloneAnalysis(originalId, "download", manual)]);
         var service = new ManualMappingService(store, gateway);
         const string valid = "[{\"sourceFileId\":\"source-1\",\"trackId\":1001}]";
@@ -95,7 +95,7 @@ public sealed class ManualMappingServiceTests
 
         var proposed = new MatchProposal(
             1, ProposalStatus.Proposed, 5, 10, 101, 0m, "already proposed", [new TrackProposal("source-1", 1001, 0m)]);
-        var proposedId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", 10, [source], releases[10], proposed);
+        var proposedId = FailedImportDiscoveryWorkflow.ComputeAnalysisId("download", AiImportSourceKinds.Queue, 10, [source], releases[10], proposed);
         store.Replace([new StoredStandaloneAnalysis(proposedId, "download", proposed)]);
         Assert.Throws<InvalidOperationException>(() => service.Create(proposedId, 101, valid, "REVIEW"));
     }
@@ -138,6 +138,56 @@ public sealed class ManualMappingServiceTests
         Assert.Throws<StaleApprovalException>(() => store.GetRequired("override"));
     }
 
+    [Test]
+    public void Human_review_for_untracked_folders_maps_tracks_with_empty_download_identity()
+    {
+        using var temp = new TempDirectory();
+        var folder = Path.Combine(temp.Path, "Artist", "Album");
+        var source = Source();
+        var releases = new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release(101)] };
+        var gateway = new MutableGateway([], [source], releases);
+        gateway.UntrackedScans[folder] = new([source], 0, 0);
+        var store = new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json"));
+        var manual = new MatchProposal(1, ProposalStatus.ManualReview, null, null, null, 0m, "review", []);
+        var originalId = FailedImportDiscoveryWorkflow.ComputeAnalysisId(
+            folder, AiImportSourceKinds.Folder, null, [source], releases[10], manual);
+        store.Replace([new StoredStandaloneAnalysis(originalId, string.Empty, manual) { FolderPath = folder }]);
+        var service = new ManualMappingService(store, gateway);
+
+        var created = service.Create(originalId, 101, "[{\"sourceFileId\":\"source-1\",\"trackId\":1001}]", "REVIEW");
+        var stored = store.GetRequired(created.AnalysisId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(stored.DownloadId, Is.EqualTo(string.Empty));
+            Assert.That(stored.FolderPath, Is.EqualTo(folder));
+            Assert.That(stored.Proposal.Status, Is.EqualTo(ProposalStatus.Proposed));
+            Assert.That(stored.Proposal.ReleaseId, Is.EqualTo(101));
+            Assert.That(stored.HumanOverride, Is.True);
+            Assert.That(stored.ParentAnalysisId, Is.EqualTo(originalId));
+        });
+    }
+
+    [Test]
+    public void Human_review_for_untracked_folders_requires_the_current_folder_scan()
+    {
+        using var temp = new TempDirectory();
+        var folder = Path.Combine(temp.Path, "Artist", "Album");
+        var source = Source();
+        var releases = new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release(101)] };
+        var gateway = new MutableGateway([], [source], releases);
+        gateway.UntrackedScans[folder] = new([source], 0, 0);
+        var store = new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json"));
+        var manual = new MatchProposal(1, ProposalStatus.ManualReview, null, null, null, 0m, "review", []);
+        var originalId = FailedImportDiscoveryWorkflow.ComputeAnalysisId(
+            folder, AiImportSourceKinds.Folder, null, [source], releases[10], manual);
+        store.Replace([new StoredStandaloneAnalysis(originalId, string.Empty, manual) { FolderPath = folder }]);
+        gateway.UntrackedScans[folder] = new([source, Source("extra")], 0, 0);
+
+        Assert.Throws<StaleApprovalException>(() => new ManualMappingService(store, gateway)
+            .Create(originalId, 101, "[{\"sourceFileId\":\"source-1\",\"trackId\":1001}]", "REVIEW"));
+    }
+
     private static SourceFileCandidate Source(string id = "source-1") =>
         new(id, "01 Song.flac", "Artist", "Album", "Song", 1, [1], 180000, null, [], 5, 10);
 
@@ -151,11 +201,15 @@ public sealed class ManualMappingServiceTests
         IReadOnlyDictionary<int, IReadOnlyList<ReleaseCandidate>> releases) : IInProcessLidarrGateway
     {
         public IReadOnlyList<SourceFileCandidate>? ScanFiles { get; init; }
+        public Dictionary<string, ManualImportScanResult> UntrackedScans { get; } =
+            new(StringComparer.Ordinal);
         public string Version => FailedImportDiscoveryWorkflow.CompatibleLidarrVersion;
         public IReadOnlyList<QueueCandidate> GetTrackedDownloads() => queue;
         public IReadOnlyList<SourceFileCandidate> GetManualImports(string downloadId) => files;
         public ManualImportScanResult GetManualImportScan(string downloadId) =>
             new(ScanFiles ?? files, files.Count - (ScanFiles?.Count ?? files.Count), 0);
+        public ManualImportScanResult GetUntrackedManualImportScan(string folderPath) =>
+            UntrackedScans.TryGetValue(folderPath, out var scan) ? scan : new ManualImportScanResult([], 0, 0);
         public IReadOnlyList<ReleaseCandidate> GetReleaseCandidates(int albumId) =>
             releases.TryGetValue(albumId, out var value) ? value : [];
     }
