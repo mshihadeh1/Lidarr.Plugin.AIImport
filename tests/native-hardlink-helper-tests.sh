@@ -13,7 +13,19 @@ MARKERS="$TMP/authorization-markers"
 mkdir -m 0700 "$AUTH" "$MARKERS"
 authorize() {
     key=$(printf '%s\n%s' "$1" "$2" | sha256sum | cut -d' ' -f1)
-    [ -e "$MARKERS/$key" ] && return 0
+    # A marker only short-circuits when the published record is still present and live;
+    # an expired (or vanished) record must be re-published so a fresh execution can proceed.
+    if [ -e "$MARKERS/$key" ]; then
+        live_name=$(cat "$MARKERS/$key")
+        if [ -e "$AUTH/$live_name" ] && python3 -c '
+import struct, sys, time
+with open(sys.argv[1], "rb") as stream:
+    data = stream.read()
+sys.exit(0 if struct.unpack_from("<q", data, 52)[0] > time.time() else 1)
+' "$AUTH/$live_name" 2>/dev/null; then
+            return 0
+        fi
+    fi
     record="$MARKERS/$key.record"
     destination_root=${3:-$(dirname -- "$2")}
     python3 - "$1" "$destination_root" "$record" > "$MARKERS/$key" <<'PY'
@@ -304,6 +316,72 @@ if [ "$(stat -c '%d' "$TMP/source/cross-device.flac")" != "$(stat -c '%d' /dev/s
     if run_helper "$TMP/source/cross-device.flac" "$cross"; then rm -f "$cross"; fail "cross-device hardlink succeeded"; fi
     [ ! -e "$cross" ] || fail "cross-device failure left a destination"
 fi
+
+printf 'exdev fallback source\n' > "$TMP/source/exdev.fallback"
+# Both endpoints sit on one filesystem; the forced-EXDEV hook simulates two kernel mounts of a
+# single dataset, so the file-handle re-materialization path must recover the hardlink.
+# Some kernels (and LXC hosts) reject open_by_handle_at; probe first and skip when unsupported.
+if python3 - "$TMP/source/exdev.fallback" <<'PY'
+import ctypes, os, sys
+libc = ctypes.CDLL(None, use_errno=True)
+AT_FDCWD = -100
+class FH(ctypes.Structure):
+    _fields_ = [("handle_bytes", ctypes.c_uint),
+                ("handle_type", ctypes.c_int),
+                ("f_handle", ctypes.c_ubyte * 100)]
+h = FH(); h.handle_bytes = 100
+mnt = ctypes.c_int(0)
+if libc.name_to_handle_at(AT_FDCWD, sys.argv[1].encode(), ctypes.byref(h), ctypes.byref(mnt), 0) != 0:
+    sys.exit(2)
+fd = libc.open_by_handle_at(AT_FDCWD, ctypes.byref(h), os.O_RDONLY)
+sys.exit(0 if fd >= 0 else 2)
+PY
+then
+exdev_dest="$TMP/exdev-lib"
+mkdir -p "$exdev_dest"
+authorize "$TMP/source/exdev.fallback" "$exdev_dest/exdev.flac" "$exdev_dest"
+AIIMPORT_TEST_FORCE_EXDEV=1 AIIMPORT_AUTHORIZATION_DIR="$AUTH" lidarr_transfermode=HardLinkOrCopy \
+    lidarr_artist_id=5 lidarr_album_id=10 lidarr_trackfile_trackids=1001 \
+    lidarr_sourcepath="$TMP/source/exdev.fallback" lidarr_destinationpath="$exdev_dest/exdev.flac" \
+    "$HELPER" "$TMP/source/exdev.fallback" "$exdev_dest/exdev.flac" || fail "forced EXDEV import did not recover through the file handle"
+[ "$(stat -c '%d:%i' "$TMP/source/exdev.fallback")" = "$(stat -c '%d:%i' "$exdev_dest/exdev.flac")" ] || fail "EXDEV fallback did not create a hardlink"
+else
+    printf '%s\n' "SKIPPED: forced-EXDEV fallback test (kernel lacks file-handle support here)"
+fi
+
+printf 'stale claim source\n' > "$TMP/source/stale-claim.flac"
+hook="$TMP/stale-claim"
+authorize "$TMP/source/stale-claim.flac" "$TMP/library/stale-claim.flac"
+stale_key=$(printf '%s\n%s' "$TMP/source/stale-claim.flac" "$TMP/library/stale-claim.flac" | sha256sum | cut -d' ' -f1)
+stale_name=$(cat "$MARKERS/$stale_key")
+AIIMPORT_TEST_BEFORE_LINK=$hook AIIMPORT_AUTHORIZATION_DIR="$AUTH" lidarr_transfermode=HardLinkOrCopy \
+    lidarr_artist_id=5 lidarr_album_id=10 lidarr_trackfile_trackids=1001 \
+    lidarr_sourcepath="$TMP/source/stale-claim.flac" lidarr_destinationpath="$TMP/library/stale-claim.flac" \
+    "$HELPER" "$TMP/source/stale-claim.flac" "$TMP/library/stale-claim.flac" & pid=$!
+wait_marker "$hook"
+kill -KILL "$pid"
+if wait "$pid" 2>/dev/null; then fail "stale-claim interruption unexpectedly succeeded"; fi
+# Expire the record while its claim survives; the stale claim must neither match nor block.
+python3 - "$AUTH/$stale_name" <<'PY'
+import os, struct, sys, time
+fd = os.open(sys.argv[1], os.O_RDWR)
+now = int(time.time())
+os.pwrite(fd, struct.pack('<q', now - 100), 44)
+os.pwrite(fd, struct.pack('<q', now - 1), 52)
+os.fsync(fd); os.close(fd)
+PY
+if AIIMPORT_AUTHORIZATION_DIR="$AUTH" lidarr_transfermode=HardLinkOrCopy \
+    lidarr_artist_id=5 lidarr_album_id=10 lidarr_trackfile_trackids=1001 \
+    lidarr_sourcepath="$TMP/source/stale-claim.flac" lidarr_destinationpath="$TMP/library/stale-claim.flac" \
+    "$HELPER" "$TMP/source/stale-claim.flac" "$TMP/library/stale-claim.flac"; then
+    fail "stale claimed authorization matched after expiry"
+fi
+[ ! -e "$TMP/library/stale-claim.flac" ] || fail "stale claimed authorization created a destination"
+run_helper "$TMP/source/stale-claim.flac" "$TMP/library/stale-claim.flac" || fail "stale claimed authorization blocked a fresh execution"
+[ "$(stat -c '%d:%i' "$TMP/source/stale-claim.flac")" = "$(stat -c '%d:%i' "$TMP/library/stale-claim.flac")" ] || fail "fresh execution after stale claim was not a hardlink"
+[ ! -e "$AUTH/$stale_name" ] || fail "expired authorization was not pruned"
+stale_claim=${stale_name%.approved}.claim
+[ ! -e "$AUTH/$stale_claim" ] || fail "stale claim was not pruned"
 
 if AIIMPORT_AUTHORIZATION_DIR="$AUTH" lidarr_transfermode=Move lidarr_sourcepath="$TMP/source/track.flac" lidarr_destinationpath="$TMP/library/deferred.flac" \
     "$HELPER" "$TMP/source/track.flac" "$TMP/library/deferred.flac"; then fail "non-hardlink mode did not defer"; else [ "$?" -eq 3 ] || fail "non-hardlink mode returned wrong code"; fi

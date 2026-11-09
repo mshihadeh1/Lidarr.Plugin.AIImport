@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <linux/openat2.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -166,6 +167,9 @@ static bool directory_path_still_names_inode(int root, const char *relative_path
 static bool read_record(int descriptor, unsigned char *buffer, size_t *length)
 {
     struct stat status;
+    /* NFSv4 ACL datasets can display a restrictive mode summary while the owner
+       retains full access; normalize our own records before validating them. */
+    if (fchmod(descriptor, 0600) != 0) return false;
     if (fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode) || status.st_uid != geteuid() ||
         (status.st_mode & 07777) != 0600 || status.st_nlink != 1 || status.st_size <= 0 ||
         status.st_size > (off_t)RECORD_LIMIT) return false;
@@ -313,6 +317,8 @@ static int publish_immutable(int authfd, const char *name, const unsigned char *
         offset += (size_t)count;
     }
     if (fdatasync(temporary) != 0) fail(EXIT_AUTHORIZATION, "cannot synchronize authorization record");
+    /* NFSv4 ACL datasets can display a restrictive mode summary; normalize it. */
+    if (fchmod(temporary, 0600) != 0) fail(EXIT_AUTHORIZATION, "cannot normalize durable record mode");
     if (linkat(temporary, "", authfd, name, AT_EMPTY_PATH) != 0)
     {
         char proc_record[64];
@@ -339,7 +345,10 @@ static int open_authorization_directory(const char *path)
     int directory = secure_openat2(root, path + 1, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     close(root);
     struct stat status;
-    if (directory < 0 || fstat(directory, &status) != 0 || status.st_uid != geteuid() ||
+    if (directory < 0) fail(EXIT_AUTHORIZATION, "authorization directory is inaccessible");
+    /* NFSv4 ACL datasets can display a restrictive mode summary; normalize it. */
+    if (fchmod(directory, 0700) != 0) fail(EXIT_AUTHORIZATION, "authorization directory mode cannot be normalized");
+    if (fstat(directory, &status) != 0 || status.st_uid != geteuid() ||
         (status.st_mode & 07777) != 0700)
         fail(EXIT_AUTHORIZATION, "authorization directory must be owned by this user with mode 0700");
     return directory;
@@ -366,7 +375,10 @@ static void publish_approved_from_stdin(const char *authorization_path, const ch
     int authfd = open_authorization_directory(authorization_path);
     int lockfd = openat(authfd, ".publish.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
     struct stat lock_status;
-    if (lockfd < 0 || fstat(lockfd, &lock_status) != 0 || !S_ISREG(lock_status.st_mode) ||
+    if (lockfd < 0) fail(EXIT_AUTHORIZATION, "authorization publication lock is unsafe");
+    /* NFSv4 ACL datasets can display a restrictive mode summary; normalize it. */
+    if (fchmod(lockfd, 0600) != 0) fail(EXIT_AUTHORIZATION, "authorization publication lock is unsafe");
+    if (fstat(lockfd, &lock_status) != 0 || !S_ISREG(lock_status.st_mode) ||
         lock_status.st_uid != geteuid() || (lock_status.st_mode & 07777) != 0600 || lock_status.st_nlink != 1)
         fail(EXIT_AUTHORIZATION, "authorization publication lock is unsafe");
     if (flock(lockfd, LOCK_EX) != 0) fail(EXIT_AUTHORIZATION, "cannot lock authorization publication");
@@ -383,6 +395,27 @@ static void publish_approved_from_stdin(const char *authorization_path, const ch
         bool valid = parse_approved(descriptor, entry->d_name, &existing);
         close(descriptor);
         if (!valid) fail(EXIT_AUTHORIZATION, "existing authorization record is malformed");
+        if (existing.expires <= (uint64_t)time(NULL))
+        {
+            /* Expired records are garbage: prune them (and any orphaned claim) so a fresh approval can proceed. */
+            char claim_name[80];
+            if (unlinkat(authfd, entry->d_name, 0) != 0)
+            {
+                char prune_failure[320];
+                snprintf(prune_failure, sizeof(prune_failure),
+                    "cannot prune expired authorization %s", entry->d_name);
+                fail(EXIT_AUTHORIZATION, prune_failure);
+            }
+            make_name(claim_name, sizeof(claim_name), existing.hex, ".claim");
+            if (unlinkat(authfd, claim_name, 0) != 0 && errno != ENOENT)
+            {
+                char prune_failure[256];
+                snprintf(prune_failure, sizeof(prune_failure),
+                    "cannot prune expired claim %s", claim_name);
+                fail(EXIT_AUTHORIZATION, prune_failure);
+            }
+            continue;
+        }
         if (existing.device == proposed.device && existing.inode == proposed.inode &&
             existing.expires >= (uint64_t)time(NULL))
             fail(EXIT_AUTHORIZATION, "an active authorization already exists for this source inode");
@@ -633,7 +666,9 @@ int main(int argc, char **argv)
         int claim_state = parse_claim(authfd, &candidate, destination_path, &destination_parent_status, &claim);
         if (claim_state == 1) close(claim);
         if (claim_state < 0) continue;
-        if (claim_state == 0 && (candidate.expires <= (uint64_t)time(NULL) || !identity_matches(&candidate, &source_status, true))) continue;
+        /* Expired records never match, even while a transfer claim exists: a stale claim must not hold an authorization open. */
+        if (candidate.expires <= (uint64_t)time(NULL)) continue;
+        if (claim_state == 0 && !identity_matches(&candidate, &source_status, true)) continue;
         selected = candidate;
         matches++;
     }
@@ -685,9 +720,69 @@ int main(int argc, char **argv)
     if (snprintf(proc_source, sizeof(proc_source), "/proc/self/fd/%d", source) >= (int)sizeof(proc_source))
         fail(EXIT_PLATFORM, "source descriptor path overflow");
     bool created_link = false;
-    if (linkat(AT_FDCWD, proc_source, destination_directory, destination_name, AT_SYMLINK_FOLLOW) != 0)
+    int link_error = linkat(AT_FDCWD, proc_source, destination_directory, destination_name, AT_SYMLINK_FOLLOW);
+#ifdef AIIMPORT_TEST_HOOKS
+    if (link_error == 0 && getenv("AIIMPORT_TEST_FORCE_EXDEV") != NULL)
     {
-        if (errno != EEXIST) fail(EXIT_LINK, "descriptor-bound hardlink creation failed; copy fallback is forbidden");
+        /* Simulate two kernel mounts of one dataset: drop the real link and force the EXDEV path. */
+        if (unlinkat(destination_directory, destination_name, 0) != 0 && errno != ENOENT)
+            fail(EXIT_PLATFORM, "EXDEV simulation could not remove the created link");
+        link_error = -1;
+        errno = EXDEV;
+    }
+#endif
+    if (link_error != 0 && errno == EXDEV)
+    {
+        /*
+         * The source and destination are two separate kernel mounts of the
+         * same dataset (for example a TrueNAS app mount). link() compares
+         * superblock instances, not device numbers, so the verified source
+         * inode must be re-materialized inside the destination's superblock
+         * through a file handle and linked from there.
+         */
+        struct file_handle *handle = malloc(sizeof(struct file_handle) + MAX_HANDLE_SZ);
+        int mount_id = 0;
+        if (handle == NULL) fail(EXIT_PLATFORM, "memory allocation failed");
+        handle->handle_bytes = MAX_HANDLE_SZ;
+        if (name_to_handle_at(AT_FDCWD, proc_source, handle, &mount_id, AT_SYMLINK_FOLLOW) != 0)
+        {
+            int handle_error = errno;
+            free(handle);
+            char handle_failure[256];
+            snprintf(handle_failure, sizeof(handle_failure),
+                "cross-mount source cannot be re-materialized (errno=%d %s); copy fallback is forbidden",
+                handle_error, strerror(handle_error));
+            fail(EXIT_LINK, handle_failure);
+        }
+        int rematerialized = open_by_handle_at(destination_directory, handle, O_RDONLY | O_CLOEXEC);
+        free(handle);
+        struct stat rematerialized_status;
+        if (rematerialized < 0 || fstat(rematerialized, &rematerialized_status) != 0 ||
+            !same_regular_inode(rematerialized, &rematerialized_status))
+        {
+            if (rematerialized >= 0) close(rematerialized);
+            fail(EXIT_LINK, "cross-mount source could not be opened in the destination superblock");
+        }
+        char proc_rematerialized[64];
+        if (snprintf(proc_rematerialized, sizeof(proc_rematerialized),
+                     "/proc/self/fd/%d", rematerialized) >= (int)sizeof(proc_rematerialized))
+        {
+            close(rematerialized);
+            fail(EXIT_PLATFORM, "source descriptor path overflow");
+        }
+        link_error = linkat(AT_FDCWD, proc_rematerialized, destination_directory, destination_name, AT_SYMLINK_FOLLOW);
+        close(rematerialized);
+    }
+    if (link_error != 0)
+    {
+        if (errno != EEXIST)
+        {
+            char link_failure[256];
+            snprintf(link_failure, sizeof(link_failure),
+                "descriptor-bound hardlink creation failed (errno=%d %s); copy fallback is forbidden",
+                (int)errno, strerror(errno));
+            fail(EXIT_LINK, link_failure);
+        }
         existing = openat(destination_directory, destination_name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
         if (existing < 0 || !same_regular_inode(existing, &source_status)) fail(EXIT_DESTINATION, "destination exists with a different identity");
     }

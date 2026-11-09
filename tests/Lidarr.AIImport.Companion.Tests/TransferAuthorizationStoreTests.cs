@@ -128,6 +128,46 @@ public sealed class TransferAuthorizationStoreTests
         Assert.That(record.SourcePath, Is.EqualTo("/downloads/native.flac"));
     }
 
+    [Test]
+    public async Task Native_retry_of_the_same_transfer_reuses_the_live_authorization()
+    {
+        using var temp = new TempDirectory();
+        var helper = System.IO.Path.Combine(temp.Path, "publisher.sh");
+        await File.WriteAllTextAsync(helper, "#!/bin/sh\n[ \"$1\" = --publish-approved ] || exit 90\ncat > \"$2/$3\"\nchmod 0600 \"$2/$3\"\n");
+        File.SetUnixFileMode(helper, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        var store = new TransferAuthorizationStore(temp.Path, helper);
+        var plan = new ApprovedImportPlan("analysis", "download", 5, 10, 101, "safety",
+            [ApprovedFile("source", "/downloads/native.flac", 1001, new FileIdentity(1, 2, 123, 4, 5, 8, 9, 420, 6, 7, 1))], "/music/Artist");
+
+        var first = await store.PublishAsync(plan, DateTimeOffset.UtcNow.AddMinutes(10), CancellationToken.None);
+        var second = await store.PublishAsync(plan, DateTimeOffset.UtcNow.AddMinutes(10), CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(second.Single().AuthorizationId, Is.EqualTo(first.Single().AuthorizationId));
+            Assert.That(Directory.EnumerateFiles(temp.Path, "*.approved"), Has.Exactly(1).Items);
+        });
+    }
+
+    [Test]
+    public async Task Native_retry_with_a_different_mapping_refuses_to_duplicate_the_authorization()
+    {
+        using var temp = new TempDirectory();
+        var helper = System.IO.Path.Combine(temp.Path, "publisher.sh");
+        await File.WriteAllTextAsync(helper, "#!/bin/sh\n[ \"$1\" = --publish-approved ] || exit 90\ncat > \"$2/$3\"\nchmod 0600 \"$2/$3\"\n");
+        File.SetUnixFileMode(helper, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        var store = new TransferAuthorizationStore(temp.Path, helper);
+        var identity = new FileIdentity(1, 2, 123, 4, 5, 8, 9, 420, 6, 7, 1);
+        var firstPlan = new ApprovedImportPlan("analysis", "download", 5, 10, 101, "safety",
+            [ApprovedFile("source", "/downloads/native.flac", 1001, identity)], "/music/Artist");
+        await store.PublishAsync(firstPlan, DateTimeOffset.UtcNow.AddMinutes(10), CancellationToken.None);
+        var secondPlan = new ApprovedImportPlan("analysis", "download", 5, 10, 102, "safety",
+            [ApprovedFile("source", "/downloads/native.flac", 1002, identity)], "/music/Artist");
+
+        Assert.ThrowsAsync<IOException>(() =>
+            store.PublishAsync(secondPlan, DateTimeOffset.UtcNow.AddMinutes(10), CancellationToken.None));
+    }
+
     private static ApprovedImportFile ApprovedFile(string id, string path, int trackId, FileIdentity identity) =>
         new(id, 77, path, trackId, new JsonObject { ["quality"] = new JsonObject { ["id"] = 1 } },
             0, "download", identity.Size, identity);

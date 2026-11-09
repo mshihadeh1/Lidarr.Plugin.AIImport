@@ -169,8 +169,27 @@ public sealed class TransferAuthorizationStore : ITransferAuthorizationStore
         DateTimeOffset expiresAt,
         CancellationToken cancellationToken)
     {
+        // A failed or interrupted transfer leaves its live authorization in place (publication is
+        // immutable). A retry of the same approved transfer must reuse those records instead of
+        // publishing duplicates: the native helper requires exactly one live match per transfer and
+        // rejects duplicates with "multiple transfer authorizations matched".
+        var liveByInode = Directory.EnumerateFiles(_directory, "*.approved", SearchOption.TopDirectoryOnly)
+            .Select(ReadApproved)
+            .Where(record => record.ExpiresAt > createdAt)
+            .GroupBy(record => (record.SourceDevice, record.SourceInode))
+            .ToDictionary(group => group.Key, group => group.First());
         var prepared = plan.Files.OrderBy(x => x.SourceId, StringComparer.Ordinal).Select(file =>
         {
+            if (liveByInode.TryGetValue(((ulong)file.Identity.Device, (ulong)file.Identity.Inode), out var live) &&
+                live.SourcePath == file.SourcePath && live.ArtistId == plan.ArtistId &&
+                live.AlbumId == plan.AlbumId && live.TrackId == file.TrackId &&
+                live.DestinationRoot == plan.DestinationRoot)
+            {
+                return (Id: live.AuthorizationId, Bytes: (byte[]?)null, File: file, Reused: true);
+            }
+            if (liveByInode.TryGetValue(((ulong)file.Identity.Device, (ulong)file.Identity.Inode), out _))
+                throw new IOException("An active transfer authorization already exists for this source inode.");
+
             var idBytes = RandomNumberGenerator.GetBytes(32);
             var id = Convert.ToHexString(idBytes).ToLowerInvariant();
             var record = new ApprovedTransferAuthorization(
@@ -178,13 +197,21 @@ public sealed class TransferAuthorizationStore : ITransferAuthorizationStore
                 file.Identity.MtimeSeconds, file.Identity.MtimeNanoseconds, file.Identity.CtimeSeconds,
                 file.Identity.CtimeNanoseconds, file.Identity.Mode, file.Identity.Uid, file.Identity.Gid,
                 plan.ArtistId, plan.AlbumId, file.TrackId, file.SourcePath, plan.DestinationRoot);
-            return (Id: id, Bytes: Serialize(record, idBytes), File: file);
+            return (Id: id, Bytes: Serialize(record, idBytes), File: file, Reused: false);
         }).ToArray();
 
         var published = new List<PublishedTransferAuthorization>(prepared.Length);
         foreach (var item in prepared)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (item.Reused)
+            {
+                var existingPath = Path.Combine(_directory, item.Id + ".approved");
+                published.Add(new PublishedTransferAuthorization(
+                    item.Id, existingPath, item.File.SourceId, item.File.TrackId, item.File.SourcePath,
+                    item.File.Identity.Device, item.File.Identity.Inode));
+                continue;
+            }
             var fileName = item.Id + ".approved";
             var start = new ProcessStartInfo(_nativeHelperPath!)
             {
