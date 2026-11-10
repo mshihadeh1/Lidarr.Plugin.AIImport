@@ -7,6 +7,7 @@ using Lidarr.Plugin.AIImport.Diagnostics;
 using Lidarr.Plugin.AIImport.Lidarr;
 using Lidarr.Plugin.AIImport.Llm;
 using Lidarr.Plugin.AIImport.Matching;
+using Lidarr.Plugin.AIImport.MusicBrainz;
 using Lidarr.Plugin.AIImport.Workflows;
 
 namespace Lidarr.Plugin.AIImport.Discovery;
@@ -26,6 +27,8 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
     private readonly ILlmMatchService? _llm;
     private readonly StandaloneAnalysisStore? _analysisStore;
     private readonly IYoloLibraryAdder? _yolo;
+    private readonly IMusicBrainzResolutionService? _musicBrainz;
+    private readonly IYoloImportCoordinator? _yoloCoordinator;
 
     public FailedImportDiscoveryWorkflow(
         IInProcessLidarrGateway gateway,
@@ -56,6 +59,31 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         : this(gateway, matcher, llm, analysisStore)
     {
         _yolo = yoloLibraryAdder;
+    }
+
+    public FailedImportDiscoveryWorkflow(
+        IInProcessLidarrGateway gateway,
+        DeterministicMatcher matcher,
+        ILlmMatchService? llm,
+        StandaloneAnalysisStore analysisStore,
+        IYoloLibraryAdder yoloLibraryAdder,
+        IMusicBrainzResolutionService musicBrainz)
+        : this(gateway, matcher, llm, analysisStore, yoloLibraryAdder)
+    {
+        _musicBrainz = musicBrainz;
+    }
+
+    public FailedImportDiscoveryWorkflow(
+        IInProcessLidarrGateway gateway,
+        DeterministicMatcher matcher,
+        ILlmMatchService? llm,
+        StandaloneAnalysisStore analysisStore,
+        IYoloLibraryAdder yoloLibraryAdder,
+        IMusicBrainzResolutionService musicBrainz,
+        IYoloImportCoordinator yoloCoordinator)
+        : this(gateway, matcher, llm, analysisStore, yoloLibraryAdder, musicBrainz)
+    {
+        _yoloCoordinator = yoloCoordinator;
     }
 
     public AiImportDiscoverResult Discover(AiImportSettings settings)
@@ -108,6 +136,17 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                 FolderPath = x.FolderPath,
                 AutomatedOverride = x.AutomatedOverride
             }).ToArray());
+        if (settings.YoloMode && _analysisStore is not null && _yoloCoordinator is not null)
+        {
+            foreach (var result in _yoloCoordinator.Process(analyses))
+            {
+                diagnostics.Add(new AiImportDiscoveryDiagnostic(
+                    result.AnalysisId,
+                    0,
+                    string.Equals(result.Status, "indeterminate", StringComparison.Ordinal) ? 1 : 0,
+                    $"YOLO import {result.Status}: {result.Message}"));
+            }
+        }
         AiImportWorkflowDiagnostics.Info(
             "discover", "completed", detail: $"queue={failed.Length};analyses={analyses.Count};diagnostics={diagnostics.Count}");
         return new AiImportDiscoverResult(analyses.ToArray(), diagnostics.ToArray(), settings.YoloMode);
@@ -298,7 +337,36 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             x.AlbumId, x.Id, x.ArtistId, x.Artist, x.Title, x.ForeignReleaseId,
             x.Tracks.Select(track => new ReleaseTrackDto(
                 track.Id, track.Title, track.DiscNumber, track.TrackNumber, track.DurationMs, track.HasFile)).ToArray())).ToArray();
-        var libraryAddition = candidates.Length == 0 ? GetLibraryAddition(files) : null;
+        var taggedAddition = GetLibraryAddition(files);
+        var libraryAddition = taggedAddition is not null && !candidates.Any(x =>
+            string.Equals(x.ForeignReleaseId, taggedAddition.ReleaseMusicBrainzId, StringComparison.OrdinalIgnoreCase))
+            ? taggedAddition
+            : null;
+        if (settings.YoloMode && proposal.Status == ProposalStatus.ManualReview &&
+            libraryAddition is null && _musicBrainz is not null)
+        {
+            try
+            {
+                var resolved = _musicBrainz.Resolve(settings, files);
+                if (resolved is not null)
+                {
+                    libraryAddition = resolved.Addition;
+                    proposal = proposal with
+                    {
+                        Explanation = $"{proposal.Explanation} MusicBrainz YOLO resolution selected {resolved.Addition.ReleaseMusicBrainzId} " +
+                                      $"at {resolved.Confidence.ToString("P0", CultureInfo.InvariantCulture)} confidence from {resolved.CandidateCount} verified candidates."
+                    };
+                }
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                               InvalidDataException or LlmProtocolException)
+            {
+                proposal = proposal with
+                {
+                    Explanation = $"{proposal.Explanation} MusicBrainz resolution failed safely: {exception.Message}"
+                };
+            }
+        }
         var analysisId = ComputeAnalysisId(sourceId, sourceKind, queueAlbumId, files, candidates, proposal);
         AiImportWorkflowDiagnostics.Info(
             "discover", "analysis-created", analysisId,

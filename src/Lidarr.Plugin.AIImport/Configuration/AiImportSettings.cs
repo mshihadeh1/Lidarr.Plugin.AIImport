@@ -36,8 +36,11 @@ public sealed class AiImportSettings : IProviderConfig
     [FieldDefinition(8, Label = "Untracked Download Folders", Type = FieldType.Textbox, HelpText = "Optional. Absolute folders to scan for albums downloaded outside Lidarr (e.g. directly in the qBittorrent download path). Separate multiple folders with a pipe, comma, or newline. The 25 newest album folders are scanned per discovery.")]
     public string ScanRoots { get; set; } = string.Empty;
 
-    [FieldDefinition(9, Label = "YOLO Mode", Type = FieldType.Checkbox, HelpText = "Skip manual triage: tagged artists and albums missing from the library are added automatically (first accessible root folder and default profiles, or the artist's existing settings), and the best verified mapping is promoted to a proposed mapping. Nothing is imported until you review the mapping, approve it, and type IMPORT.")]
+    [FieldDefinition(9, Label = "YOLO Mode", Type = FieldType.Checkbox, HelpText = "Standing authorization for unattended imports. Missing releases may be resolved through MusicBrainz and added to Lidarr; complete verified mappings are approved, hardlink-imported, and reconciled automatically. Source, ownership, destination, hardlink, and post-import validation still fail closed.")]
     public bool YoloMode { get; set; }
+
+    [FieldDefinition(10, Label = "MusicBrainz Candidate Limit", Type = FieldType.Number, Advanced = true, HelpText = "Maximum verified MusicBrainz releases fetched for a low-confidence album. Each release lookup is rate-limited and cached.")]
+    public int MusicBrainzCandidateLimit { get; set; } = 5;
 
     [FieldDefinition(99, Label = "Open AI Import Workspace", Type = FieldType.OAuth, HelpText = "Open the in-Lidarr discovery, review, approval, execution, status, and reconciliation workspace")]
     public string Workspace { get; set; } = string.Empty;
@@ -63,6 +66,7 @@ public sealed class AiImportSettingsValidator : AbstractValidator<AiImportSettin
         RuleFor(x => x.Temperature).InclusiveBetween(0m, 2m);
         RuleFor(x => x.RequestTimeoutSeconds).InclusiveBetween(1, 600);
         RuleFor(x => x.MaximumOutputTokens).InclusiveBetween(1, 1000000);
+        RuleFor(x => x.MusicBrainzCandidateLimit).InclusiveBetween(1, 10);
     }
 
     internal static string[] SplitScanRoots(string value) =>
