@@ -18,7 +18,9 @@ public sealed record DeterministicResult(
     decimal Confidence,
     IReadOnlyList<TrackProposal> Tracks,
     string Explanation,
-    IReadOnlyList<int> RankedReleaseIds);
+    IReadOnlyList<int> RankedReleaseIds,
+    int? BestReleaseId = null,
+    IReadOnlyList<TrackProposal>? BestMappings = null);
 
 public sealed class DeterministicMatcher
 {
@@ -52,7 +54,9 @@ public sealed class DeterministicMatcher
                 best.Score,
                 best.Mappings.Select(x => new TrackProposal(x.File.Id, x.Track.Id, x.Score)).ToArray(),
                 "Deterministic metadata, numbering, title, and duration checks selected one verified Lidarr release.",
-                scored.Select(x => x.Release.Id).ToArray());
+                scored.Select(x => x.Release.Id).ToArray(),
+                best.Release.Id,
+                best.Mappings.Select(x => new TrackProposal(x.File.Id, x.Track.Id, x.Score)).ToArray());
         }
 
         return new DeterministicResult(
@@ -61,7 +65,9 @@ public sealed class DeterministicMatcher
             best.Score,
             Array.Empty<TrackProposal>(),
             "Multiple verified releases remain plausible; local-model ranking is required.",
-            scored.Where(x => x.Score >= Math.Max(0.5m, best.Score - 0.20m)).Take(5).Select(x => x.Release.Id).ToArray());
+            scored.Where(x => x.Score >= Math.Max(0.5m, best.Score - 0.20m)).Take(5).Select(x => x.Release.Id).ToArray(),
+            best.Release.Id,
+            best.Mappings.Select(x => new TrackProposal(x.File.Id, x.Track.Id, x.Score)).ToArray());
     }
 
     private static ScoredRelease ScoreRelease(IReadOnlyList<SourceFileCandidate> files, ReleaseCandidate release)

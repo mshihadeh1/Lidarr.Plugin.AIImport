@@ -36,6 +36,9 @@ public sealed class AiImportSettings : IProviderConfig
     [FieldDefinition(8, Label = "Untracked Download Folders", Type = FieldType.Textbox, HelpText = "Optional. Absolute folders to scan for albums downloaded outside Lidarr (e.g. directly in the qBittorrent download path). Separate multiple folders with a pipe, comma, or newline. The 25 newest album folders are scanned per discovery.")]
     public string ScanRoots { get; set; } = string.Empty;
 
+    [FieldDefinition(9, Label = "YOLO Mode", Type = FieldType.Checkbox, HelpText = "Skip manual triage: tagged artists and albums missing from the library are added automatically (first accessible root folder and default profiles, or the artist's existing settings), and the best verified mapping is promoted to a proposed mapping. Nothing is imported until you review the mapping, approve it, and type IMPORT.")]
+    public bool YoloMode { get; set; }
+
     [FieldDefinition(99, Label = "Open AI Import Workspace", Type = FieldType.OAuth, HelpText = "Open the in-Lidarr discovery, review, approval, execution, status, and reconciliation workspace")]
     public string Workspace { get; set; } = string.Empty;
 

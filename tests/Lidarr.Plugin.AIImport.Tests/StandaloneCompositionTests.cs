@@ -35,12 +35,14 @@ public sealed class StandaloneCompositionTests
         Assert.That(typeof(ILibraryAdditionClient).IsAssignableFrom(typeof(DirectLibraryAdditionClient)), Is.True);
         Assert.That(typeof(ILidarrReconciliationClient).IsAssignableFrom(typeof(DirectLidarrReconciliationClient)), Is.True);
         Assert.That(typeof(IStandaloneAiImportWorkflow).IsAssignableFrom(typeof(StandaloneAiImportWorkflow)), Is.True);
+        Assert.That(typeof(IYoloLibraryAdder).IsAssignableFrom(typeof(YoloLibraryAdder)), Is.True);
 
         AssertDiConstructor(typeof(ApprovalStore));
         AssertDiConstructor(typeof(StandaloneAnalysisStore));
         AssertDiConstructor(typeof(TransferAuthorizationStore));
         AssertDiConstructor(typeof(NativeFileIdentityProvider));
         AssertDiConstructor(typeof(NativeTransferResultVerifier));
+        AssertDiConstructor(typeof(YoloLibraryAdder));
     }
 
     [Test]

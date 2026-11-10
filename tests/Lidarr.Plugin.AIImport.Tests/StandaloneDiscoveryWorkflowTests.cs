@@ -274,6 +274,138 @@ public sealed class StandaloneDiscoveryWorkflowTests
         Assert.That(result.Analyses, Is.Empty);
     }
 
+    [Test]
+    public void Yolo_mode_promotes_the_best_verified_mapping_without_an_llm()
+    {
+        var alternate = Release() with { Id = 102, ForeignReleaseId = "release-102" };
+        var gateway = new FakeGateway(
+            [new QueueCandidate(1, 10, "failed", TrackedImportState.ImportFailed, "failed")],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>> { ["failed"] = [Source("source-1")] },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release(), alternate] });
+        var settings = Settings();
+        settings.YoloMode = true;
+
+        var result = new FailedImportDiscoveryWorkflow(gateway, new DeterministicMatcher(), null).Discover(settings);
+        var dto = result.Analyses.Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.YoloMode, Is.True);
+            Assert.That(dto.Proposal.Status, Is.EqualTo(ProposalStatus.Proposed));
+            Assert.That(dto.Proposal.ReleaseId, Is.EqualTo(101));
+            Assert.That(dto.Proposal.Explanation, Does.StartWith("YOLO mode:"));
+            Assert.That(dto.Proposal.Tracks, Has.Exactly(1).Items.Matches<TrackProposal>(x => x.TrackId == 1001));
+            Assert.That(dto.UsedLlm, Is.False);
+        });
+    }
+
+    [Test]
+    public void Ambiguous_candidates_stay_in_manual_review_when_yolo_mode_is_off()
+    {
+        var alternate = Release() with { Id = 102, ForeignReleaseId = "release-102" };
+        var gateway = new FakeGateway(
+            [new QueueCandidate(1, 10, "failed", TrackedImportState.ImportFailed, "failed")],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>> { ["failed"] = [Source("source-1")] },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release(), alternate] });
+
+        var result = new FailedImportDiscoveryWorkflow(gateway, new DeterministicMatcher(), null).Discover(Settings());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.YoloMode, Is.False);
+            Assert.That(result.Analyses.Single().Proposal.Status, Is.EqualTo(ProposalStatus.ManualReview));
+        });
+    }
+
+    [Test]
+    public void Yolo_mode_adds_missing_tagged_library_entities_and_reanalyzes()
+    {
+        using var temp = new TempDirectory();
+        var albumDir = Path.Combine(temp.Path, "Artist", "Album");
+        Directory.CreateDirectory(albumDir);
+        var filePath = Path.Combine(albumDir, "01 - Song.flac");
+        File.WriteAllText(filePath, "");
+        var unlinked = Source("untracked-a") with
+        {
+            SourcePath = filePath,
+            ArtistId = null,
+            AlbumId = null,
+            ArtistMusicBrainzId = "5df68e5e-c4b8-3f2d-9a1e-6c4a1b2c3d4e",
+            AlbumMusicBrainzId = "1b2c3d4e-5df6-48e5-c4b8-3f2d9a1e6c4a",
+            ReleaseMusicBrainzId = "6c4a1b2c-3d4e-5df6-8e5c-4b83f2d9a1e6"
+        };
+        var linked = unlinked with { ArtistId = 5, AlbumId = 10 };
+        var adder = new FakeYoloAdder();
+        var gateway = new FakeGateway(
+            [],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>>(),
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release()] },
+            untrackedScans: new Dictionary<string, ManualImportScanResult> { [albumDir] = new([unlinked], 0, 0) },
+            untrackedRescans: new Dictionary<string, ManualImportScanResult> { [albumDir] = new([linked], 0, 0) });
+        using var storeTemp = new TempDirectory();
+        var settings = Settings();
+        settings.ScanRoots = temp.Path;
+        settings.YoloMode = true;
+
+        var result = new FailedImportDiscoveryWorkflow(
+            gateway, new DeterministicMatcher(), null,
+            new StandaloneAnalysisStore(Path.Combine(storeTemp.Path, "analyses.json")), adder)
+            .Discover(settings);
+        var dto = result.Analyses.Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(adder.Additions, Has.Count.EqualTo(1));
+            Assert.That(adder.Additions[0].ArtistMusicBrainzId, Is.EqualTo(unlinked.ArtistMusicBrainzId));
+            Assert.That(dto.Proposal.Status, Is.EqualTo(ProposalStatus.Proposed));
+            Assert.That(dto.Proposal.ReleaseId, Is.EqualTo(101));
+            Assert.That(dto.LibraryAddition, Is.Null);
+            Assert.That(result.YoloMode, Is.True);
+        });
+    }
+
+    [Test]
+    public void Yolo_mode_keeps_the_manual_flow_when_the_automated_addition_fails()
+    {
+        using var temp = new TempDirectory();
+        var albumDir = Path.Combine(temp.Path, "Artist", "Album");
+        Directory.CreateDirectory(albumDir);
+        File.WriteAllText(Path.Combine(albumDir, "01 - Song.flac"), "");
+        var unlinked = Source("untracked-a") with
+        {
+            SourcePath = Path.Combine(albumDir, "01 - Song.flac"),
+            ArtistId = null,
+            AlbumId = null,
+            ArtistMusicBrainzId = "5df68e5e-c4b8-3f2d-9a1e-6c4a1b2c3d4e",
+            AlbumMusicBrainzId = "1b2c3d4e-5df6-48e5-c4b8-3f2d9a1e6c4a",
+            ReleaseMusicBrainzId = "6c4a1b2c-3d4e-5df6-8e5c-4b83f2d9a1e6"
+        };
+        var adder = new FakeYoloAdder { Throw = new InvalidOperationException("MusicBrainz unreachable") };
+        var gateway = new FakeGateway(
+            [],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>>(),
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release()] },
+            untrackedScans: new Dictionary<string, ManualImportScanResult> { [albumDir] = new([unlinked], 0, 0) });
+        using var storeTemp = new TempDirectory();
+        var settings = Settings();
+        settings.ScanRoots = temp.Path;
+        settings.YoloMode = true;
+
+        var result = new FailedImportDiscoveryWorkflow(
+            gateway, new DeterministicMatcher(), null,
+            new StandaloneAnalysisStore(Path.Combine(storeTemp.Path, "analyses.json")), adder)
+            .Discover(settings);
+        var dto = result.Analyses.Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(adder.Additions, Has.Count.EqualTo(1));
+            Assert.That(dto.Proposal.Status, Is.EqualTo(ProposalStatus.ManualReview));
+            Assert.That(dto.LibraryAddition, Is.Not.Null);
+            Assert.That(result.Diagnostics.Single().Message, Does.Contain("YOLO mode: automatic library addition failed"));
+        });
+    }
+
     private static AiImportSettings Settings() => new()
     {
         ApiBaseUrl = "https://saved.example/v1",
@@ -294,11 +426,13 @@ public sealed class StandaloneDiscoveryWorkflowTests
         IReadOnlyDictionary<int, IReadOnlyList<ReleaseCandidate>> releases,
         IReadOnlySet<string>? vanishedDownloads = null,
         IReadOnlyDictionary<string, (int Imported, int Indeterminate)>? scanCounts = null,
-        IReadOnlyDictionary<string, ManualImportScanResult>? untrackedScans = null) : IInProcessLidarrGateway
+        IReadOnlyDictionary<string, ManualImportScanResult>? untrackedScans = null,
+        IReadOnlyDictionary<string, ManualImportScanResult>? untrackedRescans = null) : IInProcessLidarrGateway
     {
         public List<string> ManualImportDownloadIds { get; } = [];
         public List<int> ReleaseAlbumIds { get; } = [];
         public List<string> UntrackedScanFolders { get; } = [];
+        private readonly Dictionary<string, int> _untrackedCalls = new();
         public string Version => FailedImportDiscoveryWorkflow.CompatibleLidarrVersion;
         public IReadOnlyList<QueueCandidate> GetTrackedDownloads() => queue;
         public IReadOnlyList<SourceFileCandidate> GetManualImports(string downloadId)
@@ -318,6 +452,10 @@ public sealed class StandaloneDiscoveryWorkflowTests
         public ManualImportScanResult GetUntrackedManualImportScan(string folderPath)
         {
             UntrackedScanFolders.Add(folderPath);
+            var call = _untrackedCalls.TryGetValue(folderPath, out var count) ? count : 0;
+            _untrackedCalls[folderPath] = call + 1;
+            if (call > 0 && untrackedRescans is not null && untrackedRescans.TryGetValue(folderPath, out var rescan))
+                return rescan;
             return untrackedScans is not null && untrackedScans.TryGetValue(folderPath, out var scan)
                 ? scan
                 : new ManualImportScanResult([], 0, 0);
@@ -326,6 +464,20 @@ public sealed class StandaloneDiscoveryWorkflowTests
         {
             ReleaseAlbumIds.Add(albumId);
             return releases.TryGetValue(albumId, out var value) ? value : [];
+        }
+    }
+
+    private sealed class FakeYoloAdder : IYoloLibraryAdder
+    {
+        public List<LibraryAdditionDto> Additions { get; } = [];
+        public LibraryAdditionCreatedDto Result { get; set; } =
+            new(5, 10, 101, "artist-mb", "album-mb", "release-mb", "complete", null);
+        public Exception? Throw { get; set; }
+        public LibraryAdditionCreatedDto TryAddTaggedAlbum(LibraryAdditionDto addition)
+        {
+            Additions.Add(addition);
+            if (Throw is not null) throw Throw;
+            return Result;
         }
     }
 

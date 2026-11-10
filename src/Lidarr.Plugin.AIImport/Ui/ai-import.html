@@ -13,6 +13,7 @@
     button{border:0;border-radius:4px;padding:9px 14px;background:var(--blue);color:#07111b;font-weight:700;cursor:pointer}button.secondary{background:#59616d;color:white}button.danger{background:var(--red);color:#1c080a}button:disabled{opacity:.45;cursor:not-allowed}
     .card{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:6px;margin:14px 0;padding:16px}.card.proposed{border-left-color:var(--green)}.card h2{font-size:17px;margin:0 0 6px;overflow-wrap:anywhere}
     .badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:700;background:#4b515b}.badge.good{background:#235c43;color:#b9f6d7}.badge.warn{background:#624d21;color:#ffe4a5}
+.notice.yolo{border-left:4px solid #2e9e63}
     table{width:100%;border-collapse:collapse;margin:12px 0;background:var(--panel2)}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-size:12px;text-transform:uppercase}.confidence{white-space:nowrap}
     .review{background:#17191d;border:1px solid var(--line);padding:12px;border-radius:4px;margin-top:12px}.review label{display:block;margin:8px 0}.review input[type=text]{width:220px;max-width:100%;background:#0f1114;color:var(--text);border:1px solid var(--line);border-radius:4px;padding:8px}
     pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#101215;border:1px solid var(--line);padding:10px;border-radius:4px}.error{color:#ffadb2}.success{color:#9de9bf}.hidden{display:none}.candidate-list{margin:8px 0;padding-left:20px}.statusline{margin-top:10px;font-weight:600}
@@ -415,6 +416,9 @@
       const diagnostics = response.diagnostics || [];
       const proposed = analyses.filter(x => x.proposal && x.proposal.status === 'proposed').length;
       summary.textContent = `${analyses.length} analysis result(s): ${proposed} proposed, ${analyses.length - proposed} require manual review.`;
+      if (response.yoloMode) results.appendChild(element('section',
+        'YOLO mode is on: missing tagged artists and albums were added to the library automatically, and the best verified mapping was promoted to a proposed mapping. Nothing is imported until you review the mapping, approve it, and type IMPORT.',
+        'notice yolo'));
       diagnostics.forEach(item => results.appendChild(element(
         'p',
         `${item.message} Already imported: ${item.alreadyImportedCount}; indeterminate: ${item.indeterminateCount}.`,

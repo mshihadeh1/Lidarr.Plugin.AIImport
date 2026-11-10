@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Lidarr.Plugin.AIImport.Approval;
 using Lidarr.Plugin.AIImport.Configuration;
 using Lidarr.Plugin.AIImport.Lidarr;
 using Lidarr.Plugin.AIImport.Llm;
@@ -22,6 +24,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
     private readonly DeterministicMatcher _matcher;
     private readonly ILlmMatchService? _llm;
     private readonly StandaloneAnalysisStore? _analysisStore;
+    private readonly IYoloLibraryAdder? _yolo;
 
     public FailedImportDiscoveryWorkflow(
         IInProcessLidarrGateway gateway,
@@ -41,6 +44,17 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         : this(gateway, matcher, llm)
     {
         _analysisStore = analysisStore;
+    }
+
+    public FailedImportDiscoveryWorkflow(
+        IInProcessLidarrGateway gateway,
+        DeterministicMatcher matcher,
+        ILlmMatchService? llm,
+        StandaloneAnalysisStore analysisStore,
+        IYoloLibraryAdder yoloLibraryAdder)
+        : this(gateway, matcher, llm, analysisStore)
+    {
+        _yolo = yoloLibraryAdder;
     }
 
     public AiImportDiscoverResult Discover(AiImportSettings settings)
@@ -81,12 +95,17 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         var folderAnalyses = ScanUntrackedFolders(settings, diagnostics);
         analyses.AddRange(folderAnalyses);
 
+        if (settings.YoloMode)
+        {
+            ApplyYoloMode(analyses, settings, diagnostics);
+        }
+
         _analysisStore?.Replace(analyses.Select(x =>
             new StoredStandaloneAnalysis(x.AnalysisId, x.DownloadId, x.Proposal)
             {
                 FolderPath = x.FolderPath
             }).ToArray());
-        return new AiImportDiscoverResult(analyses.ToArray(), diagnostics.ToArray());
+        return new AiImportDiscoverResult(analyses.ToArray(), diagnostics.ToArray(), settings.YoloMode);
     }
 
     private List<AiImportAnalysisDto> ScanUntrackedFolders(
@@ -262,6 +281,8 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             proposal = ManualReview($"Proposal failed strict validation: {exception.Message}");
         }
 
+        proposal = PromoteYoloProposal(proposal, deterministic, files, candidates, settings);
+
         var safeFiles = files.Select(x => new SourceFileDto(
             x.Id, x.Name, x.Artist, x.Album, x.Title, x.DiscNumber, x.TrackNumbers.ToArray(), x.DurationMs)).ToArray();
         var safeCandidates = candidates.Select(x => new ReleaseCandidateDto(
@@ -328,6 +349,116 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
 
     private static MatchProposal ManualReview(string explanation, decimal confidence = 0m) =>
         new(1, ProposalStatus.ManualReview, null, null, null, confidence, explanation, Array.Empty<TrackProposal>());
+
+    private static MatchProposal PromoteYoloProposal(
+        MatchProposal proposal,
+        DeterministicResult deterministic,
+        IReadOnlyList<SourceFileCandidate> files,
+        IReadOnlyList<ReleaseCandidate> candidates,
+        AiImportSettings settings)
+    {
+        if (!settings.YoloMode || proposal.Status != ProposalStatus.ManualReview ||
+            deterministic.BestReleaseId is not > 0 ||
+            deterministic.BestMappings is not { Count: > 0 } ||
+            deterministic.BestMappings.Count != files.Count)
+        {
+            return proposal;
+        }
+
+        var bestRelease = candidates.FirstOrDefault(x => x.Id == deterministic.BestReleaseId.Value);
+        if (bestRelease is null || bestRelease.ArtistId is not > 0)
+        {
+            return proposal;
+        }
+
+        var promoted = new MatchProposal(
+            1,
+            ProposalStatus.Proposed,
+            bestRelease.ArtistId,
+            bestRelease.AlbumId,
+            bestRelease.Id,
+            deterministic.Confidence,
+            $"YOLO mode: the best verified release was promoted to a proposed mapping (confidence {deterministic.Confidence.ToString("P0", CultureInfo.InvariantCulture)}). Review the mapping, then approve and execute.",
+            deterministic.BestMappings);
+        try
+        {
+            return StrictProposalValidator.Validate(promoted, files, candidates);
+        }
+        catch (ProposalValidationException)
+        {
+            // YOLO never weakens validation; an unsafe mapping stays in manual review.
+            return proposal;
+        }
+    }
+
+    private void ApplyYoloMode(
+        List<AiImportAnalysisDto> analyses,
+        AiImportSettings settings,
+        List<AiImportDiscoveryDiagnostic> diagnostics)
+    {
+        if (_yolo is null) return;
+
+        for (var i = 0; i < analyses.Count; i++)
+        {
+            var analysis = analyses[i];
+            var addition = analysis.LibraryAddition;
+            if (addition is null) continue;
+
+            var sourceId = string.IsNullOrWhiteSpace(analysis.DownloadId) ? analysis.FolderPath ?? string.Empty : analysis.DownloadId;
+
+            LibraryAdditionCreatedDto created;
+            try
+            {
+                created = _yolo.TryAddTaggedAlbum(addition);
+            }
+            catch (Exception exception)
+            {
+                diagnostics.Add(new AiImportDiscoveryDiagnostic(
+                    sourceId, 0, 0,
+                    $"YOLO mode: automatic library addition failed ({exception.Message}). Use the manual add flow on the analysis card."));
+                continue;
+            }
+
+            if (created.State != "complete")
+            {
+                diagnostics.Add(new AiImportDiscoveryDiagnostic(
+                    sourceId, 0, 0,
+                    $"YOLO mode: {created.Outcome ?? "automatic library addition did not complete"}. Use the manual add flow on the analysis card."));
+                continue;
+            }
+
+            ManualImportScanResult rescan;
+            int? queueAlbumId = null;
+            try
+            {
+                if (analysis.FolderPath is not null)
+                {
+                    rescan = _gateway.GetUntrackedManualImportScan(analysis.FolderPath);
+                }
+                else
+                {
+                    queueAlbumId = _gateway.GetTrackedDownloads()
+                        .FirstOrDefault(x =>
+                            string.Equals(x.DownloadId, analysis.DownloadId, StringComparison.Ordinal) &&
+                            x.State is TrackedImportState.ImportBlocked or TrackedImportState.ImportFailed)?.AlbumId;
+                    rescan = _gateway.GetManualImportScan(analysis.DownloadId);
+                }
+            }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException or InvalidDataException)
+            {
+                diagnostics.Add(new AiImportDiscoveryDiagnostic(
+                    sourceId, 0, 0,
+                    $"YOLO mode: library addition completed but the source became unavailable ({exception.Message}). Run Discover again."));
+                continue;
+            }
+
+            var reanalyzed = AnalyzeScan(
+                rescan, analysis.DownloadId, analysis.FolderPath, analysis.SourceKind, analysis.Title,
+                queueAlbumId, settings, out var reDiagnostic);
+            if (reDiagnostic is not null) diagnostics.Add(reDiagnostic);
+            if (reanalyzed is not null) analyses[i] = reanalyzed;
+        }
+    }
 
     public static string ComputeAnalysisId(
         string sourceId,
