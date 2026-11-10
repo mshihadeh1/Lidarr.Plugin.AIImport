@@ -491,7 +491,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             LibraryAdditionCreatedDto created;
             try
             {
-                created = _yolo.TryAddTaggedAlbum(addition);
+                created = _yolo.TryAddTaggedAlbum(addition, settings);
             }
             catch (Exception exception)
             {

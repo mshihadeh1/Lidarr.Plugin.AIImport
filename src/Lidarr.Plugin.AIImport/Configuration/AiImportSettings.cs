@@ -42,6 +42,15 @@ public sealed class AiImportSettings : IProviderConfig
     [FieldDefinition(10, Label = "MusicBrainz Candidate Limit", Type = FieldType.Number, Advanced = true, HelpText = "Maximum verified MusicBrainz releases fetched for a low-confidence album. Each release lookup is rate-limited and cached.")]
     public int MusicBrainzCandidateLimit { get; set; } = 5;
 
+    [FieldDefinition(11, Label = "YOLO Root Folder ID", Type = FieldType.Number, HelpText = "Required when YOLO mode is enabled. The exact accessible Lidarr root-folder ID used for automatic library additions.")]
+    public int YoloRootFolderId { get; set; }
+
+    [FieldDefinition(12, Label = "YOLO Quality Profile ID", Type = FieldType.Number, HelpText = "Required when YOLO mode is enabled. The exact Lidarr quality-profile ID used for automatic library additions.")]
+    public int YoloQualityProfileId { get; set; }
+
+    [FieldDefinition(13, Label = "YOLO Metadata Profile ID", Type = FieldType.Number, HelpText = "Required when YOLO mode is enabled. The exact Lidarr metadata-profile ID used for automatic library additions.")]
+    public int YoloMetadataProfileId { get; set; }
+
     [FieldDefinition(99, Label = "Open AI Import Workspace", Type = FieldType.OAuth, HelpText = "Open the in-Lidarr discovery, review, approval, execution, status, and reconciliation workspace")]
     public string Workspace { get; set; } = string.Empty;
 
@@ -67,6 +76,9 @@ public sealed class AiImportSettingsValidator : AbstractValidator<AiImportSettin
         RuleFor(x => x.RequestTimeoutSeconds).InclusiveBetween(1, 600);
         RuleFor(x => x.MaximumOutputTokens).InclusiveBetween(1, 1000000);
         RuleFor(x => x.MusicBrainzCandidateLimit).InclusiveBetween(1, 10);
+        RuleFor(x => x.YoloRootFolderId).GreaterThan(0).When(x => x.YoloMode);
+        RuleFor(x => x.YoloQualityProfileId).GreaterThan(0).When(x => x.YoloMode);
+        RuleFor(x => x.YoloMetadataProfileId).GreaterThan(0).When(x => x.YoloMode);
     }
 
     internal static string[] SplitScanRoots(string value) =>

@@ -1,4 +1,5 @@
 using Lidarr.Plugin.AIImport.Approval;
+using Lidarr.Plugin.AIImport.Configuration;
 using Lidarr.Plugin.AIImport.Discovery;
 using NzbDrone.Core.Music;
 using NzbDrone.Core.Profiles.Metadata;
@@ -17,6 +18,8 @@ namespace Lidarr.Plugin.AIImport.Lidarr;
 public interface IYoloLibraryAdder
 {
     LibraryAdditionCreatedDto TryAddTaggedAlbum(LibraryAdditionDto addition);
+    LibraryAdditionCreatedDto TryAddTaggedAlbum(LibraryAdditionDto addition, AiImportSettings settings) =>
+        TryAddTaggedAlbum(addition);
 }
 
 public sealed class YoloLibraryAdder : IYoloLibraryAdder
@@ -51,6 +54,25 @@ public sealed class YoloLibraryAdder : IYoloLibraryAdder
             rootFolderId,
             qualityProfileId,
             metadataProfileId));
+    }
+
+    public LibraryAdditionCreatedDto TryAddTaggedAlbum(LibraryAdditionDto addition, AiImportSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var root = _rootFolders.All().SingleOrDefault(x => x.Id == settings.YoloRootFolderId && x.Accessible &&
+                                                           !string.IsNullOrWhiteSpace(x.Path) && Path.IsPathFullyQualified(x.Path))
+            ?? throw new InvalidOperationException("The configured YOLO root folder is missing or inaccessible.");
+        var quality = _qualityProfiles.All().SingleOrDefault(x => x.Id == settings.YoloQualityProfileId)
+            ?? throw new InvalidOperationException("The configured YOLO quality profile is missing.");
+        var metadata = _metadataProfiles.All().SingleOrDefault(x => x.Id == settings.YoloMetadataProfileId)
+            ?? throw new InvalidOperationException("The configured YOLO metadata profile is missing.");
+        return _client.EnsureAlbum(new LibraryAdditionRequest(
+            addition.ArtistMusicBrainzId,
+            addition.AlbumMusicBrainzId,
+            addition.ReleaseMusicBrainzId,
+            root.Id,
+            quality.Id,
+            metadata.Id));
     }
 
     private (int RootFolderId, int QualityProfileId, int MetadataProfileId) ResolveDestination(LibraryAdditionDto addition)
