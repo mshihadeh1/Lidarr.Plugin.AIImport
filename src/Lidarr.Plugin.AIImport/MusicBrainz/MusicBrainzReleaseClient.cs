@@ -38,6 +38,7 @@ public interface IMusicBrainzReleaseClient
 public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
 {
     private const int MaximumResponseBytes = 2 * 1024 * 1024;
+    private const int SearchWindow = 10;
     private static readonly Uri ApiRoot = new("https://musicbrainz.org/ws/2/");
     private static readonly SemaphoreSlim RateGate = new(1, 1);
     private static readonly ConcurrentDictionary<string, CacheEntry> Cache = new(StringComparer.Ordinal);
@@ -75,12 +76,19 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
         if (artist is null || album is null) return [];
 
         var query = $"artist:\"{EscapeQuery(artist)}\" AND release:\"{EscapeQuery(album)}\"";
-        var uri = new Uri(ApiRoot, $"release/?query={Uri.EscapeDataString(query)}&fmt=json&limit={limit.ToString(CultureInfo.InvariantCulture)}");
+        var uri = new Uri(ApiRoot, $"release/?query={Uri.EscapeDataString(query)}&fmt=json&limit={SearchWindow.ToString(CultureInfo.InvariantCulture)}");
         using var document = await GetJsonAsync(uri, cancellationToken).ConfigureAwait(false);
         if (!document.RootElement.TryGetProperty("releases", out var releases) || releases.ValueKind != JsonValueKind.Array)
             throw new InvalidDataException("MusicBrainz release search returned no releases array.");
+        if (!document.RootElement.TryGetProperty("count", out var countElement) ||
+            !countElement.TryGetInt32(out var totalCount) || totalCount < 0)
+            throw new InvalidDataException("MusicBrainz release search returned no valid result count.");
+        // Search fallback cannot safely pick an edition when MusicBrainz has candidates
+        // outside the bounded window. Exact tag MBIDs remain the path for large edition sets.
+        if (totalCount > SearchWindow) return [];
 
         var ids = releases.EnumerateArray()
+            .Where(item => SearchTrackCount(item) == files.Count)
             .Select(item => new
             {
                 Id = RequiredGuid(item, "id"),
@@ -91,8 +99,10 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
             .Select(x => x.OrderByDescending(y => y.Score).First())
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.Id)
-            .Take(limit)
             .ToArray();
+        // A configured lookup cap must never hide structurally plausible editions from
+        // the model. Refuse rather than truncate an ambiguous candidate set.
+        if (ids.Length > limit) return [];
 
         var result = new List<MusicBrainzReleaseCandidate>(ids.Length);
         foreach (var candidate in ids)
@@ -179,31 +189,55 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
         await RateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var delay = TimeSpan.FromSeconds(1) - (_timeProvider.GetUtcNow() - _lastRequest);
-            if (delay > TimeSpan.Zero) await Task.Delay(delay, _timeProvider, cancellationToken).ConfigureAwait(false);
-            using var response = await _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-            _lastRequest = _timeProvider.GetUtcNow();
-            response.EnsureSuccessStatusCode();
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            using var memory = new MemoryStream();
-            var buffer = new byte[16 * 1024];
-            while (true)
+            for (var attempt = 1; attempt <= 3; attempt++)
             {
-                var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-                if (read == 0) break;
-                if (memory.Length + read > MaximumResponseBytes)
-                    throw new InvalidDataException("MusicBrainz response exceeded 2 MiB.");
-                memory.Write(buffer, 0, read);
+                var delay = TimeSpan.FromSeconds(1) - (_timeProvider.GetUtcNow() - _lastRequest);
+                if (delay > TimeSpan.Zero) await Task.Delay(delay, _timeProvider, cancellationToken).ConfigureAwait(false);
+                using var response = await _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                _lastRequest = _timeProvider.GetUtcNow();
+                if (IsTransient(response.StatusCode) && attempt < 3)
+                {
+                    await Task.Delay(GetRetryDelay(response), _timeProvider, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+                response.EnsureSuccessStatusCode();
+                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+                using var memory = new MemoryStream();
+                var buffer = new byte[16 * 1024];
+                while (true)
+                {
+                    var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                    if (read == 0) break;
+                    if (memory.Length + read > MaximumResponseBytes)
+                        throw new InvalidDataException("MusicBrainz response exceeded 2 MiB.");
+                    memory.Write(buffer, 0, read);
+                }
+                var payload = memory.ToArray();
+                using var validated = JsonDocument.Parse(payload);
+                Cache[key] = new CacheEntry(payload, _timeProvider.GetUtcNow().AddHours(24));
+                return JsonDocument.Parse(payload);
             }
-            var payload = memory.ToArray();
-            using var validated = JsonDocument.Parse(payload);
-            Cache[key] = new CacheEntry(payload, _timeProvider.GetUtcNow().AddHours(24));
-            return JsonDocument.Parse(payload);
+            throw new HttpRequestException("MusicBrainz request exhausted its bounded retry budget.");
         }
         finally
         {
             RateGate.Release();
         }
+    }
+
+    private static bool IsTransient(System.Net.HttpStatusCode statusCode) =>
+        statusCode is System.Net.HttpStatusCode.TooManyRequests or
+            System.Net.HttpStatusCode.BadGateway or
+            System.Net.HttpStatusCode.ServiceUnavailable or
+            System.Net.HttpStatusCode.GatewayTimeout;
+
+    private static TimeSpan GetRetryDelay(HttpResponseMessage response)
+    {
+        var delay = response.Headers.RetryAfter?.Delta;
+        if (delay is null && response.Headers.RetryAfter?.Date is { } retryAt)
+            delay = retryAt - DateTimeOffset.UtcNow;
+        if (delay is null || delay <= TimeSpan.Zero) delay = TimeSpan.FromSeconds(2);
+        return delay > TimeSpan.FromSeconds(30) ? TimeSpan.FromSeconds(30) : delay.Value;
     }
 
     private static (Guid ArtistId, string Artist) ReadArtistCredit(JsonElement root)
@@ -233,6 +267,19 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
     }
 
     private static string EscapeQuery(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
+
+    private static int SearchTrackCount(JsonElement release)
+    {
+        if (!release.TryGetProperty("media", out var media) || media.ValueKind != JsonValueKind.Array) return 0;
+        var total = 0;
+        foreach (var medium in media.EnumerateArray())
+        {
+            if (!medium.TryGetProperty("track-count", out var count) || !count.TryGetInt32(out var value) || value < 0)
+                return 0;
+            total = checked(total + value);
+        }
+        return total;
+    }
 
     private static Guid RequiredGuid(JsonElement element, string property) =>
         Guid.TryParse(RequiredString(element, property), out var value) ? value : Guid.Empty;

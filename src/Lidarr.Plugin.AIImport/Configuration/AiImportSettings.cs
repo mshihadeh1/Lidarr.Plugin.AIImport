@@ -51,6 +51,9 @@ public sealed class AiImportSettings : IProviderConfig
     [FieldDefinition(13, Label = "YOLO Metadata Profile ID", Type = FieldType.Number, HelpText = "Required when YOLO mode is enabled. The exact Lidarr metadata-profile ID used for automatic library additions.")]
     public int YoloMetadataProfileId { get; set; }
 
+    [FieldDefinition(14, Label = "YOLO Scan Interval", Type = FieldType.Number, Unit = "minutes", HelpText = "When YOLO mode and untracked folders are configured, queue a fresh discovery at this interval.")]
+    public int YoloScanIntervalMinutes { get; set; } = 15;
+
     [FieldDefinition(99, Label = "Open AI Import Workspace", Type = FieldType.OAuth, HelpText = "Open the in-Lidarr discovery, review, approval, execution, status, and reconciliation workspace")]
     public string Workspace { get; set; } = string.Empty;
 
@@ -79,6 +82,7 @@ public sealed class AiImportSettingsValidator : AbstractValidator<AiImportSettin
         RuleFor(x => x.YoloRootFolderId).GreaterThan(0).When(x => x.YoloMode);
         RuleFor(x => x.YoloQualityProfileId).GreaterThan(0).When(x => x.YoloMode);
         RuleFor(x => x.YoloMetadataProfileId).GreaterThan(0).When(x => x.YoloMode);
+        RuleFor(x => x.YoloScanIntervalMinutes).InclusiveBetween(5, 1440);
     }
 
     internal static string[] SplitScanRoots(string value) =>

@@ -59,9 +59,17 @@ public sealed class YoloLibraryAdder : IYoloLibraryAdder
     public LibraryAdditionCreatedDto TryAddTaggedAlbum(LibraryAdditionDto addition, AiImportSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        var root = _rootFolders.All().SingleOrDefault(x => x.Id == settings.YoloRootFolderId && x.Accessible &&
-                                                           !string.IsNullOrWhiteSpace(x.Path) && Path.IsPathFullyQualified(x.Path))
-            ?? throw new InvalidOperationException("The configured YOLO root folder is missing or inaccessible.");
+        RootFolder root;
+        try
+        {
+            root = _rootFolders.Get(settings.YoloRootFolderId, timeout: true);
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException("The configured YOLO root folder is missing or inaccessible.", exception);
+        }
+        if (!root.Accessible || string.IsNullOrWhiteSpace(root.Path) || !Path.IsPathFullyQualified(root.Path))
+            throw new InvalidOperationException("The configured YOLO root folder is missing or inaccessible.");
         var quality = _qualityProfiles.All().SingleOrDefault(x => x.Id == settings.YoloQualityProfileId)
             ?? throw new InvalidOperationException("The configured YOLO quality profile is missing.");
         var metadata = _metadataProfiles.All().SingleOrDefault(x => x.Id == settings.YoloMetadataProfileId)

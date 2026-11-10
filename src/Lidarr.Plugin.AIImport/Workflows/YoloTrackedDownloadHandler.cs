@@ -67,6 +67,10 @@ public sealed class YoloTrackedDownloadHandler : IHandle<TrackedDownloadRefreshe
 
         try
         {
+            if (_commands.All().Any(command =>
+                    string.Equals(command.Name, new AiImportDiscoverCommand().Name, StringComparison.Ordinal) &&
+                    command.Status is CommandStatus.Queued or CommandStatus.Started))
+                return;
             _commands.Push(new AiImportDiscoverCommand
             {
                 ProviderDefinitionId = providers[0].Id

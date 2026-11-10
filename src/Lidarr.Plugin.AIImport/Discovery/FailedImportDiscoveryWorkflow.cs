@@ -16,6 +16,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
 {
     public const string CompatibleLidarrVersion = "3.1.2.4913";
     public const int MaxUntrackedFoldersPerScan = 25;
+    private static readonly SemaphoreSlim DiscoveryGate = new(1, 1);
 
     private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -87,6 +88,20 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
     }
 
     public AiImportDiscoverResult Discover(AiImportSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        DiscoveryGate.Wait();
+        try
+        {
+            return DiscoverCore(settings);
+        }
+        finally
+        {
+            DiscoveryGate.Release();
+        }
+    }
+
+    private AiImportDiscoverResult DiscoverCore(AiImportSettings settings)
     {
         AiImportWorkflowDiagnostics.Info("discover", "started", detail: $"yolo={settings.YoloMode}");
         if (!string.Equals(_gateway.Version, CompatibleLidarrVersion, StringComparison.Ordinal))

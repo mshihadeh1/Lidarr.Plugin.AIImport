@@ -450,6 +450,24 @@ public sealed class ApprovalStore
         }
     }
 
+    public async Task<IReadOnlyList<ApprovalRecord>> GetPendingReconciliationAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var processLock = await AcquireProcessLockAsync(cancellationToken).ConfigureAwait(false);
+            return (await ReadAsync(cancellationToken).ConfigureAwait(false))
+                .Where(record => record.State is ApprovalState.Executing or ApprovalState.Indeterminate)
+                .Where(record => record.AuthorizationBindings is { Count: > 0 })
+                .OrderBy(record => record.ExecutionStartedAt)
+                .ToArray();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     private async Task<FileStream> AcquireProcessLockAsync(CancellationToken cancellationToken)
     {
         var directory = Path.GetDirectoryName(_path)

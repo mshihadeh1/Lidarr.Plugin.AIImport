@@ -13,12 +13,14 @@ public sealed class StandaloneStatePaths
             throw new InvalidOperationException("AI Import state storage must be under Lidarr app data.");
         ApprovalStore = Path.Combine(Root, "approvals.json");
         AnalysisStore = Path.Combine(Root, "analyses.json");
+        YoloRuntimeStore = Path.Combine(Root, "yolo-runtime.json");
         AuthorizationDirectory = Path.Combine(Root, "authorizations");
     }
 
     public string Root { get; }
     public string ApprovalStore { get; }
     public string AnalysisStore { get; }
+    public string YoloRuntimeStore { get; }
     public string AuthorizationDirectory { get; }
 
     public void ConfigureAuthorizationEnvironment()
