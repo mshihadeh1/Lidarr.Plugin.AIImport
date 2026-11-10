@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Lidarr.Plugin.AIImport.Diagnostics;
 
 namespace Lidarr.Plugin.AIImport.Approval;
 
@@ -15,10 +16,14 @@ public sealed class ApprovalService : IApprovedPlanRevalidator
 
     public async Task<CreatedApproval> ApproveAsync(string analysisId, TimeSpan lifetime, CancellationToken cancellationToken)
     {
+        AiImportWorkflowDiagnostics.Info("approve", "started", analysisId);
         var plan = await _plans.BuildCurrentAsync(analysisId, cancellationToken).ConfigureAwait(false);
         Validate(plan, analysisId);
-        return await _store.CreateAsync(plan.AnalysisId, JsonSerializer.SerializeToElement(plan), lifetime, cancellationToken)
+        AiImportWorkflowDiagnostics.Info("approve", "plan-validated", analysisId, $"files={plan.Files.Count};release={plan.ReleaseId}");
+        var created = await _store.CreateAsync(plan.AnalysisId, JsonSerializer.SerializeToElement(plan), lifetime, cancellationToken)
             .ConfigureAwait(false);
+        AiImportWorkflowDiagnostics.Info("approve", "created", created.ApprovalId, $"analysis={analysisId}");
+        return created;
     }
 
     public async Task RevalidateAsync(ApprovedImportPlan expected, CancellationToken cancellationToken)

@@ -185,6 +185,10 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
 
         var result = _manualImports
             .GetMediaFiles(folderPath, null, null, FilterFilesType.None, false)
+            // Lidarr includes existing library decisions when IncludeExisting is true.
+            // An untracked-folder scan may consume only files physically returned from
+            // the requested folder, never sibling downloads or library destinations.
+            .Where(x => IsSourceInsideScanFolder(folderPath, x.Path))
             .Where(x => string.IsNullOrWhiteSpace(x.DownloadId))
             .Select(file =>
             {
@@ -224,6 +228,20 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
         }
 
         return new ManualImportScanResult(result, 0, 0);
+    }
+
+    internal static bool IsSourceInsideScanFolder(string folderPath, string sourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath) || string.IsNullOrWhiteSpace(sourcePath) ||
+            !Path.IsPathFullyQualified(folderPath) || !Path.IsPathFullyQualified(sourcePath))
+            return false;
+
+        var relative = Path.GetRelativePath(Path.GetFullPath(folderPath), Path.GetFullPath(sourcePath));
+        return !string.Equals(relative, ".", StringComparison.Ordinal) &&
+               !Path.IsPathFullyQualified(relative) &&
+               !string.Equals(relative, "..", StringComparison.Ordinal) &&
+               !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+               !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
     }
 
     internal static IReadOnlyList<ManualImportItem> FilterPendingDownloadFiles(

@@ -122,4 +122,5 @@ public sealed record AiImportAnalysisDto(
     bool UsedLlm,
     LibraryAdditionDto? LibraryAddition = null,
     string SourceKind = AiImportSourceKinds.Queue,
-    string? FolderPath = null);
+    string? FolderPath = null,
+    bool AutomatedOverride = false);

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Lidarr.Plugin.AIImport.Approval;
 using Lidarr.Plugin.AIImport.Authorization;
+using Lidarr.Plugin.AIImport.Diagnostics;
 using Lidarr.Plugin.AIImport.Lidarr;
 
 namespace Lidarr.Plugin.AIImport.Execution;
@@ -35,6 +36,8 @@ public sealed class ImportExecutionService
         CancellationToken cancellationToken,
         bool trustedInProcess = false)
     {
+        var stage = "authenticate";
+        AiImportWorkflowDiagnostics.Info("execute", "started", approvalId);
         var authenticated = trustedInProcess
             ? await _approvals.AuthenticateTrustedAsync(approvalId, cancellationToken).ConfigureAwait(false)
             : await _approvals.AuthenticateAsync(approvalId, token, cancellationToken).ConfigureAwait(false);
@@ -51,13 +54,17 @@ public sealed class ImportExecutionService
         if (!string.Equals(plan.AnalysisId, authenticated.AnalysisId, StringComparison.Ordinal) || plan.Files.Count == 0)
             throw new InvalidDataException("Approved import payload does not match its approval record.");
 
+        stage = "revalidate";
         await _revalidator.RevalidateAsync(plan, cancellationToken).ConfigureAwait(false);
+        AiImportWorkflowDiagnostics.Info("execute", "revalidated", approvalId, $"files={plan.Files.Count};release={plan.ReleaseId}");
+        stage = "begin-durable-execution";
         if (trustedInProcess)
             await _approvals.BeginExecutionTrustedAsync(approvalId, plan.AnalysisId, cancellationToken).ConfigureAwait(false);
         else
             await _approvals.BeginExecutionAsync(approvalId, token, plan.AnalysisId, cancellationToken).ConfigureAwait(false);
         try
         {
+            stage = "publish-authorizations";
             var published = await _authorizations.PublishAsync(plan, authenticated.ExpiresAt, cancellationToken).ConfigureAwait(false);
             if (published.Count != plan.Files.Count)
                 throw new InvalidDataException("Native authorization publication was incomplete.");
@@ -76,17 +83,22 @@ public sealed class ImportExecutionService
             if (bindings.Select(binding => binding.SourceId).Distinct(StringComparer.Ordinal).Count() != plan.Files.Count)
                 throw new InvalidDataException("Native authorization publication did not bind every approved source exactly once.");
             await _approvals.RecordAuthorizationBindingsAsync(approvalId, bindings, cancellationToken).ConfigureAwait(false);
+            AiImportWorkflowDiagnostics.Info("execute", "authorizations-recorded", approvalId, $"count={bindings.Length}");
             var authorizationIds = bindings.Select(binding => binding.AuthorizationId).ToArray();
+            stage = "submit-lidarr-command";
             var command = await _lidarr.SubmitManualImportAsync(plan, cancellationToken).ConfigureAwait(false);
+            stage = "record-lidarr-command";
             await _approvals.RecordCommandAsync(
                 approvalId,
                 command.CommandId,
                 command.Status,
                 CancellationToken.None).ConfigureAwait(false);
+            AiImportWorkflowDiagnostics.Info("execute", "command-recorded", approvalId, $"command={command.CommandId};status={command.Status}");
             return new ImportExecutionStarted(command.CommandId, command.Status, authorizationIds);
         }
         catch (Exception exception)
         {
+            AiImportWorkflowDiagnostics.Error("execute", stage, exception, approvalId);
             try
             {
                 await _approvals.CompleteAsync(

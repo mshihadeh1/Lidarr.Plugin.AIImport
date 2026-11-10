@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Lidarr.Plugin.AIImport.Approval;
 using Lidarr.Plugin.AIImport.Configuration;
+using Lidarr.Plugin.AIImport.Diagnostics;
 using Lidarr.Plugin.AIImport.Lidarr;
 using Lidarr.Plugin.AIImport.Llm;
 using Lidarr.Plugin.AIImport.Matching;
@@ -59,6 +60,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
 
     public AiImportDiscoverResult Discover(AiImportSettings settings)
     {
+        AiImportWorkflowDiagnostics.Info("discover", "started", detail: $"yolo={settings.YoloMode}");
         if (!string.Equals(_gateway.Version, CompatibleLidarrVersion, StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"Lidarr {CompatibleLidarrVersion} is required; running version is {_gateway.Version}.");
@@ -103,8 +105,11 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         _analysisStore?.Replace(analyses.Select(x =>
             new StoredStandaloneAnalysis(x.AnalysisId, x.DownloadId, x.Proposal)
             {
-                FolderPath = x.FolderPath
+                FolderPath = x.FolderPath,
+                AutomatedOverride = x.AutomatedOverride
             }).ToArray());
+        AiImportWorkflowDiagnostics.Info(
+            "discover", "completed", detail: $"queue={failed.Length};analyses={analyses.Count};diagnostics={diagnostics.Count}");
         return new AiImportDiscoverResult(analyses.ToArray(), diagnostics.ToArray(), settings.YoloMode);
     }
 
@@ -281,7 +286,11 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             proposal = ManualReview($"Proposal failed strict validation: {exception.Message}");
         }
 
+        var proposalBeforeYolo = proposal;
         proposal = PromoteYoloProposal(proposal, deterministic, files, candidates, settings);
+        var automatedOverride = settings.YoloMode &&
+                                proposalBeforeYolo.Status == ProposalStatus.ManualReview &&
+                                proposal.Status == ProposalStatus.Proposed;
 
         var safeFiles = files.Select(x => new SourceFileDto(
             x.Id, x.Name, x.Artist, x.Album, x.Title, x.DiscNumber, x.TrackNumbers.ToArray(), x.DurationMs)).ToArray();
@@ -290,8 +299,12 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             x.Tracks.Select(track => new ReleaseTrackDto(
                 track.Id, track.Title, track.DiscNumber, track.TrackNumber, track.DurationMs, track.HasFile)).ToArray())).ToArray();
         var libraryAddition = candidates.Length == 0 ? GetLibraryAddition(files) : null;
+        var analysisId = ComputeAnalysisId(sourceId, sourceKind, queueAlbumId, files, candidates, proposal);
+        AiImportWorkflowDiagnostics.Info(
+            "discover", "analysis-created", analysisId,
+            $"source={sourceKind};files={files.Count};candidates={candidates.Length};status={proposal.Status};llm={usedLlm}");
         return new AiImportAnalysisDto(
-            ComputeAnalysisId(sourceId, sourceKind, queueAlbumId, files, candidates, proposal),
+            analysisId,
             downloadId,
             title,
             proposal,
@@ -300,7 +313,8 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             usedLlm,
             libraryAddition,
             sourceKind,
-            folderPath);
+            folderPath,
+            automatedOverride);
     }
 
     internal static LibraryAdditionDto? GetLibraryAddition(IReadOnlyList<SourceFileCandidate> files)
