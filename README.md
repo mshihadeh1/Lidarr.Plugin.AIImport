@@ -1,4 +1,4 @@
-# Lidarr AI Import v2.0.2
+# Lidarr AI Import v2.0.3
 
 Standalone AI-assisted strict-hardlink imports for **Lidarr 3.1.2.4913**, with optional unattended MusicBrainz-backed YOLO mode.
 
@@ -46,7 +46,7 @@ The plugin checks these settings again before authorization and command submissi
 
 ### From a GitHub release
 
-Install `Lidarr.Plugin.AIImport-v2.0.2.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
+Install `Lidarr.Plugin.AIImport-v2.0.3.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
 ### Manual installation
 
@@ -68,7 +68,7 @@ Install `Lidarr.Plugin.AIImport-v2.0.2.net8.0.zip` through Lidarr's plugin suppo
    ```
 
 3. Restart Lidarr.
-4. Confirm **System → Plugins** reports `AI Import` version `2.0.2.0`.
+4. Confirm **System → Plugins** reports `AI Import` version `2.0.3.0`.
 5. Configure the exact Media Management settings listed above and restart Lidarr once more.
 
 ## Configure the LLM endpoint
@@ -128,7 +128,7 @@ v1.3.0 introduced the original discovery-only YOLO mapping promotion. v2.0.0 rep
 
 v2.0.1 expands the bounded MusicBrainz resolver without weakening selection safety. It tries exact and normalized artist/title aliases with exact source track count, safely pages complete result sets up to 50 releases, strips obvious folder-only year/format suffixes for fallback search, and reports why resolution stopped. It also carries automated-override provenance for every complete unattended proposal so Lidarr's audited identification-only rejections do not block a fully verified mapping. The LLM still sees only real returned editions, the configured plausible-edition cap still fails closed, and all operational, ownership, destination, and execution rejections remain blocking.
 
-v2.0.2 accepts MusicBrainz's nullable numeric metadata for medium position, track position, and track duration without crashing discovery. Missing positions use deterministic array order and a missing duration remains unknown (`0` milliseconds). It retains v2.0.1's bounded resolver and fail-closed candidate selection.
+v2.0.3 reuses an existing artist's root folder and quality/metadata profiles. Configured YOLO destination settings are defaults for new artists only. Lidarr detects each source file's actual audio quality from its filename, codec, bitrate, and sample size; the plugin preserves that exact FLAC, WAV, MP3, or other `QualityModel` through approval, import, and reconciliation. It retains v2.0.2's nullable MusicBrainz metadata handling and v2.0.1's bounded resolver.
 
 ### Downloads for artists not yet in Lidarr
 
@@ -157,7 +157,7 @@ If an execute response is lost or reports `Indeterminate`, do not execute again.
 
 ```bash
 git submodule update --init --recursive
-VERSION=2.0.2 ./scripts/build.sh
+VERSION=2.0.3 ./scripts/build.sh
 ```
 
 A dirty local verification build requires `ALLOW_DIRTY_BUILD=1` and intentionally does not claim a corresponding-source commit URL. Release packages must be produced from a clean tagged tree.
