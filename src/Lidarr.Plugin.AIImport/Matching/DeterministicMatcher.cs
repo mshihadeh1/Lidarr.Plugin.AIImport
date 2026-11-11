@@ -30,9 +30,13 @@ public sealed class DeterministicMatcher
 
     public DeterministicResult Match(IReadOnlyList<SourceFileCandidate> files, IReadOnlyList<ReleaseCandidate> releases)
     {
-        if (files.Count == 0 || releases.Count == 0)
+        if (files.Count == 0)
         {
-            return Manual("No source files or verified Lidarr releases were available.");
+            return Manual("No source files were available.");
+        }
+        if (releases.Count == 0)
+        {
+            return Manual("Source files were found, but Lidarr supplied no verified release candidates.");
         }
 
         var scored = releases.Select(release => ScoreRelease(files, release))

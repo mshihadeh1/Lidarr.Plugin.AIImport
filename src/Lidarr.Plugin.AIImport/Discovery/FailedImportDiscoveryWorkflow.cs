@@ -342,9 +342,10 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
 
         var proposalBeforeYolo = proposal;
         proposal = PromoteYoloProposal(proposal, deterministic, files, candidates, settings);
-        var automatedOverride = settings.YoloMode &&
-                                proposalBeforeYolo.Status == ProposalStatus.ManualReview &&
-                                proposal.Status == ProposalStatus.Proposed;
+        // Every unattended YOLO proposal is machine-authorized, including mappings that were
+        // already deterministic before YOLO promotion. Carry explicit provenance so only the
+        // audited automatic-identification rejections may be bypassed during authoritative review.
+        var automatedOverride = settings.YoloMode && proposal.Status == ProposalStatus.Proposed;
 
         var safeFiles = files.Select(x => new SourceFileDto(
             x.Id, x.Name, x.Artist, x.Album, x.Title, x.DiscNumber, x.TrackNumbers.ToArray(), x.DurationMs)).ToArray();
@@ -362,14 +363,22 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         {
             try
             {
-                var resolved = _musicBrainz.Resolve(settings, files);
-                if (resolved is not null)
+                var attempt = _musicBrainz.Resolve(settings, files);
+                if (attempt.Result is not null)
                 {
+                    var resolved = attempt.Result;
                     libraryAddition = resolved.Addition;
                     proposal = proposal with
                     {
                         Explanation = $"{proposal.Explanation} MusicBrainz YOLO resolution selected {resolved.Addition.ReleaseMusicBrainzId} " +
                                       $"at {resolved.Confidence.ToString("P0", CultureInfo.InvariantCulture)} confidence from {resolved.CandidateCount} verified candidates."
+                    };
+                }
+                else
+                {
+                    proposal = proposal with
+                    {
+                        Explanation = $"{proposal.Explanation} MusicBrainz YOLO resolution did not select a release: {attempt.Explanation}."
                     };
                 }
             }
