@@ -68,7 +68,7 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
         if (action == "getOAuthToken")
             return new Dictionary<string, string>();
 
-        var allowed = action is "discover" or "add-library" or "manual-map" or "approve" or "execute" or "reconcile" or "status";
+        var allowed = action is "discover" or "add-library" or "manual-map" or "approve" or "execute" or "reconcile" or "status" or "history" or "rollback";
         if (!allowed)
         {
             throw new ArgumentException("Unknown AI Import action.", nameof(action));
@@ -99,6 +99,9 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
                 RequiredQuery(query, "approvalId"), RequiredQuery(query, "executeConfirmation")),
             "reconcile" => _standaloneWorkflow.Reconcile(RequiredQuery(query, "approvalId")),
             "status" => _standaloneWorkflow.Status(RequiredQuery(query, "approvalId")),
+            "history" => _standaloneWorkflow.ReviewImports(),
+            "rollback" => _standaloneWorkflow.Rollback(
+                RequiredQuery(query, "approvalId"), RequiredQuery(query, "rollbackConfirmation")),
             _ => throw new ArgumentException("Unknown AI Import action.", nameof(action))
         };
     }

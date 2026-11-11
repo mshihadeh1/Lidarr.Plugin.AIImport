@@ -91,15 +91,84 @@ public sealed class StandaloneDiscoveryWorkflowTests
             [new QueueCandidate(1, 10, "stale", TrackedImportState.ImportFailed, "stale")],
             new Dictionary<string, IReadOnlyList<SourceFileCandidate>> { ["stale"] = [] },
             new Dictionary<int, IReadOnlyList<ReleaseCandidate>>(),
-            scanCounts: new Dictionary<string, (int Imported, int Indeterminate)> { ["stale"] = (2, 0) });
+            scanCounts: new Dictionary<string, (int Imported, int Indeterminate)> { ["stale"] = (2, 0) },
+            queueSnapshots:
+            [
+                [new QueueCandidate(1, 10, "stale", TrackedImportState.ImportFailed, "stale")],
+                []
+            ]);
+        var settings = Settings(); settings.YoloMode = true;
 
-        var result = new FailedImportDiscoveryWorkflow(gateway, new DeterministicMatcher(), null).Discover(Settings());
+        var result = new FailedImportDiscoveryWorkflow(gateway, new DeterministicMatcher(), null).Discover(settings);
 
         Assert.Multiple(() =>
         {
             Assert.That(result.Analyses, Is.Empty);
             Assert.That(result.Diagnostics.Single().AlreadyImportedCount, Is.EqualTo(2));
             Assert.That(result.Diagnostics.Single().IndeterminateCount, Is.Zero);
+            Assert.That(gateway.RemovedActivityDownloadIds, Is.EqualTo(new[] { "stale" }));
+        });
+    }
+
+    [Test]
+    public void Yolo_success_discards_the_old_snapshot_and_rediscovers_before_returning()
+    {
+        var first = new QueueCandidate(1, 10, "first", TrackedImportState.ImportFailed, "first");
+        var gateway = new FakeGateway(
+            [first],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>> { ["first"] = [Source("source-1")] },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release()] },
+            queueSnapshots: new IReadOnlyList<QueueCandidate>[] { [first], [] });
+        var coordinator = new FakeYoloCoordinator(new YoloImportResult("analysis", "complete", "verified"));
+        using var temp = new TempDirectory();
+        var settings = Settings(); settings.YoloMode = true;
+
+        var result = new FailedImportDiscoveryWorkflow(
+            gateway, new DeterministicMatcher(), null,
+            new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json")),
+            new FakeYoloAdder(), null!, coordinator).Discover(settings);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(gateway.TrackedDownloadCalls, Is.EqualTo(2));
+            Assert.That(coordinator.Calls, Is.EqualTo(1));
+            Assert.That(result.Analyses, Is.Empty);
+            Assert.That(result.YoloContinuation, Is.False);
+            Assert.That(result.Diagnostics.Any(x => x.Message.Contains("deferred", StringComparison.OrdinalIgnoreCase)), Is.False);
+        });
+    }
+
+    [Test]
+    public void Yolo_pending_result_stops_without_mutating_a_second_album()
+    {
+        var queue = new[]
+        {
+            new QueueCandidate(1, 10, "first", TrackedImportState.ImportFailed, "first"),
+            new QueueCandidate(2, 10, "second", TrackedImportState.ImportFailed, "second")
+        };
+        var gateway = new FakeGateway(
+            queue,
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>>
+            {
+                ["first"] = [Source("source-1")],
+                ["second"] = [Source("source-2")]
+            },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release()] });
+        var coordinator = new FakeYoloCoordinator(new YoloImportResult("analysis", "pending", "still running"));
+        using var temp = new TempDirectory();
+        var settings = Settings(); settings.YoloMode = true;
+
+        var result = new FailedImportDiscoveryWorkflow(
+            gateway, new DeterministicMatcher(), null,
+            new StandaloneAnalysisStore(Path.Combine(temp.Path, "analyses.json")),
+            new FakeYoloAdder(), null!, coordinator).Discover(settings);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(gateway.TrackedDownloadCalls, Is.EqualTo(1));
+            Assert.That(coordinator.Calls, Is.EqualTo(1));
+            Assert.That(result.Analyses, Has.Count.EqualTo(2));
+            Assert.That(result.Diagnostics.Single(x => x.Message.Contains("still running", StringComparison.Ordinal)).IndeterminateCount, Is.Zero);
         });
     }
 
@@ -413,10 +482,11 @@ public sealed class StandaloneDiscoveryWorkflowTests
         var settings = Settings();
         settings.ScanRoots = temp.Path;
         settings.YoloMode = true;
+        var coordinator = new FakeYoloCoordinator(new YoloImportResult("analysis", "complete", "must not run"));
 
         var result = new FailedImportDiscoveryWorkflow(
             gateway, new DeterministicMatcher(), null,
-            new StandaloneAnalysisStore(Path.Combine(storeTemp.Path, "analyses.json")), adder)
+            new StandaloneAnalysisStore(Path.Combine(storeTemp.Path, "analyses.json")), adder, null!, coordinator)
             .Discover(settings);
         var dto = result.Analyses.Single();
 
@@ -426,6 +496,7 @@ public sealed class StandaloneDiscoveryWorkflowTests
             Assert.That(dto.Proposal.Status, Is.EqualTo(ProposalStatus.ManualReview));
             Assert.That(dto.LibraryAddition, Is.Not.Null);
             Assert.That(result.Diagnostics.Single().Message, Does.Contain("YOLO mode: automatic library addition failed"));
+            Assert.That(coordinator.Calls, Is.Zero);
         });
     }
 
@@ -450,14 +521,21 @@ public sealed class StandaloneDiscoveryWorkflowTests
         IReadOnlySet<string>? vanishedDownloads = null,
         IReadOnlyDictionary<string, (int Imported, int Indeterminate)>? scanCounts = null,
         IReadOnlyDictionary<string, ManualImportScanResult>? untrackedScans = null,
-        IReadOnlyDictionary<string, ManualImportScanResult>? untrackedRescans = null) : IInProcessLidarrGateway
+        IReadOnlyDictionary<string, ManualImportScanResult>? untrackedRescans = null,
+        IReadOnlyList<IReadOnlyList<QueueCandidate>>? queueSnapshots = null) : IInProcessLidarrGateway
     {
         public List<string> ManualImportDownloadIds { get; } = [];
         public List<int> ReleaseAlbumIds { get; } = [];
         public List<string> UntrackedScanFolders { get; } = [];
+        public List<string> RemovedActivityDownloadIds { get; } = [];
+        public int TrackedDownloadCalls { get; private set; }
         private readonly Dictionary<string, int> _untrackedCalls = new();
         public string Version => FailedImportDiscoveryWorkflow.CompatibleLidarrVersion;
-        public IReadOnlyList<QueueCandidate> GetTrackedDownloads() => queue;
+        public IReadOnlyList<QueueCandidate> GetTrackedDownloads()
+        {
+            var call = TrackedDownloadCalls++;
+            return queueSnapshots is not null && call < queueSnapshots.Count ? queueSnapshots[call] : queue;
+        }
         public IReadOnlyList<SourceFileCandidate> GetManualImports(string downloadId)
         {
             ManualImportDownloadIds.Add(downloadId);
@@ -487,6 +565,17 @@ public sealed class StandaloneDiscoveryWorkflowTests
         {
             ReleaseAlbumIds.Add(albumId);
             return releases.TryGetValue(albumId, out var value) ? value : [];
+        }
+        public void RemoveVerifiedImportFromActivity(string downloadId) => RemovedActivityDownloadIds.Add(downloadId);
+    }
+
+    private sealed class FakeYoloCoordinator(YoloImportResult result) : IYoloImportCoordinator
+    {
+        public int Calls { get; private set; }
+        public YoloImportResult? ProcessNext(IReadOnlyList<AiImportAnalysisDto> analyses)
+        {
+            Calls++;
+            return result with { AnalysisId = analyses[0].AnalysisId };
         }
     }
 

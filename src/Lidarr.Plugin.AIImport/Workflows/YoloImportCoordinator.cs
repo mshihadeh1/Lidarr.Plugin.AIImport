@@ -14,7 +14,7 @@ public sealed record YoloImportResult(
 
 public interface IYoloImportCoordinator
 {
-    IReadOnlyList<YoloImportResult> Process(IReadOnlyList<AiImportAnalysisDto> analyses);
+    YoloImportResult? ProcessNext(IReadOnlyList<AiImportAnalysisDto> analyses);
 }
 
 public sealed class YoloImportCoordinator : IYoloImportCoordinator
@@ -48,22 +48,11 @@ public sealed class YoloImportCoordinator : IYoloImportCoordinator
         _timeProvider = timeProvider;
     }
 
-    public IReadOnlyList<YoloImportResult> Process(IReadOnlyList<AiImportAnalysisDto> analyses)
+    public YoloImportResult? ProcessNext(IReadOnlyList<AiImportAnalysisDto> analyses)
     {
         ArgumentNullException.ThrowIfNull(analyses);
-        var results = new List<YoloImportResult>();
         var eligible = analyses.Where(IsCompleteProposal).OrderBy(x => x.AnalysisId, StringComparer.Ordinal).ToArray();
-        if (eligible.Length == 0) return results;
-
-        // A completed import changes Lidarr track/file state and therefore makes every
-        // other analysis snapshot stale. Execute one snapshot, then require a fresh
-        // discovery before considering the next album.
-        results.Add(ProcessOne(eligible[0]));
-        results.AddRange(eligible.Skip(1).Select(x => new YoloImportResult(
-            x.AnalysisId,
-            "deferred",
-            "Another YOLO import was processed first; this album requires a fresh discovery snapshot before automatic execution.")));
-        return results;
+        return eligible.Length == 0 ? null : ProcessOne(eligible[0]);
     }
 
     private YoloImportResult ProcessOne(AiImportAnalysisDto analysis)

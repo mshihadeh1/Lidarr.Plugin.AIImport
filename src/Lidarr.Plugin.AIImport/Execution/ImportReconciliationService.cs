@@ -61,7 +61,8 @@ public enum ImportReconciliationStatus
 public sealed record ImportReconciliationResult(
     ImportReconciliationStatus Status,
     int VerifiedFiles,
-    string Message);
+    string Message,
+    IReadOnlyList<ReconciledImportFile>? Files = null);
 
 public sealed class ImportReconciliationException(string message) : Exception(message);
 
@@ -190,6 +191,17 @@ public sealed class ImportReconciliationService : IImportReconciliationService
             orderedFiles.Length,
             commandId is null
                 ? "The command receipt was unavailable, but every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings."
-                : "Every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings.");
+                : "Every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings.",
+            selectedHistory.Select(item =>
+            {
+                var approved = orderedFiles.Single(file => file.TrackId == item.TrackId);
+                var binding = bindingsBySourceId[approved.SourceId];
+                return new ReconciledImportFile(
+                    item.HistoryId, binding.AuthorizationId, approved.SourceId,
+                    item.TrackFileId, item.TrackId, approved.SourcePath,
+                    approved.Identity.Device, approved.Identity.Inode, item.ImportedPath,
+                    item.Size, item.Quality, item.IndexerFlags,
+                    approved.Identity.Device, approved.Identity.Inode);
+            }).ToArray());
     }
 }

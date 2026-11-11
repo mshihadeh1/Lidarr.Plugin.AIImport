@@ -111,13 +111,19 @@ public sealed class AiImportConnectorTests
         connector.RequestAction("execute", execute);
         connector.RequestAction("reconcile", Credentials());
         connector.RequestAction("status", Credentials());
+        connector.RequestAction("history", new Dictionary<string, string>());
+        connector.RequestAction("rollback", new Dictionary<string, string>
+        {
+            ["approvalId"] = "approval-1", ["rollbackConfirmation"] = "ROLLBACK"
+        });
 
         Assert.Multiple(() =>
         {
             Assert.That(standalone.AnalysisId, Is.EqualTo("analysis-1"));
-            Assert.That(standalone.Calls, Is.EqualTo(new[] { "add-library", "manual-map", "approve", "execute", "reconcile", "status" }));
+            Assert.That(standalone.Calls, Is.EqualTo(new[]
+                { "add-library", "manual-map", "approve", "execute", "reconcile", "status", "review-imports", "rollback" }));
             Assert.That(standalone.ApprovalIds, Has.All.EqualTo("approval-1"));
-            Assert.That(standalone.ApprovalIds, Has.Count.EqualTo(3));
+            Assert.That(standalone.ApprovalIds, Has.Count.EqualTo(4));
         });
         Assert.Throws<ArgumentException>(() =>
             connector.RequestAction("execute", new Dictionary<string, string>()));
@@ -305,6 +311,17 @@ public sealed class AiImportConnectorTests
             Record("status", approvalId);
             return new ApprovalStatusDto(approvalId, "analysis-1", ApprovalState.Executing,
                 DateTimeOffset.UtcNow.AddMinutes(10), 42, "queued", null);
+        }
+        public IReadOnlyList<ImportReviewDto> ReviewImports()
+        {
+            Calls.Add("review-imports");
+            return [];
+        }
+        public ImportRollbackResult Rollback(string approvalId, string confirmation)
+        {
+            Assert.That(confirmation, Is.EqualTo("ROLLBACK"));
+            Record("rollback", approvalId);
+            return new ImportRollbackResult(approvalId, 1, "rolled back");
         }
         private void Record(string call, string approvalId)
         {

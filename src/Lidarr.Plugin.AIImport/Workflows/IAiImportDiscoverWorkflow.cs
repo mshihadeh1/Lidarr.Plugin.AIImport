@@ -11,7 +11,8 @@ public interface IAiImportDiscoverWorkflow
 public sealed record AiImportDiscoverResult(
     IReadOnlyList<AiImportAnalysisDto> Analyses,
     IReadOnlyList<AiImportDiscoveryDiagnostic> Diagnostics,
-    bool YoloMode = false)
+    bool YoloMode = false,
+    bool YoloContinuation = false)
 {
     public AiImportDiscoverResult(IReadOnlyList<AiImportAnalysisDto> analyses)
         : this(analyses, [])

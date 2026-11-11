@@ -1,4 +1,5 @@
 using Lidarr.Plugin.AIImport.Configuration;
+using Lidarr.Plugin.AIImport.Discovery;
 using Lidarr.Plugin.AIImport.Workflows;
 using NzbDrone.Core.Messaging.Commands;
 
@@ -46,9 +47,7 @@ public sealed class AiImportDiscoverCommandHandler : IExecute<AiImportDiscoverCo
         message.Result = null;
 
         var settings = _settingsResolver.ResolveEnabled(message.ProviderDefinitionId);
-        var result = _workflow.Discover(settings);
-
-        message.Result = result;
+        message.Result = _workflow.Discover(settings);
         message.Status = AiImportDiscoverStatus.Succeeded;
     }
 }

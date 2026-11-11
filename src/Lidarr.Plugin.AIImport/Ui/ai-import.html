@@ -23,7 +23,7 @@
 <body>
 <header><h1>AI Import Workspace</h1><p>Standalone, explicit-approval, hardlink-only imports inside Lidarr</p></header>
 <main>
-  <section class="notice"><strong>Safety:</strong> Discovery is read-only. Review every mapping before approval. Execution is single-use and never falls back to copying. If an execution response is uncertain, do not retry—use Status and Reconcile.</section>
+  <section class="notice"><strong>Safety:</strong> Discovery is read-only unless YOLO mode is enabled. In YOLO, each verified library addition, import, or stale-activity cleanup is processed one at a time with a fresh rediscovery. Manual execution is single-use and never falls back to copying. If an execution response is uncertain, do not retry—use Status and Reconcile.</section>
   <section class="toolbar">
     <button id="discover">Discover failed imports</button>
     <button id="back" class="secondary">Back to Lidarr</button>
@@ -31,6 +31,7 @@
   </section>
   <section id="summary" class="summary hidden"></section>
   <section id="results"></section>
+  <section class="summary"><h2>Import history</h2><button id="refresh-history" class="secondary">Refresh history</button><div id="history" class="muted">Loading…</div></section>
 </main>
 <script>
 'use strict';
@@ -41,6 +42,7 @@
   const discoverButton = document.getElementById('discover');
   const summary = document.getElementById('summary');
   const results = document.getElementById('results');
+  const history = document.getElementById('history');
   let apiRoot;
   let apiKey;
   let provider;
@@ -430,6 +432,44 @@
     } finally { discoverButton.disabled = false; }
   }
 
+  async function loadHistory() {
+    history.replaceChildren(element('p', 'Loading durable import history…', 'muted'));
+    try {
+      const records = await action('history');
+      history.replaceChildren();
+      (records || []).forEach(record => {
+        const card = element('article', null, 'card');
+        card.appendChild(element('h2', `Album ${record.albumId} · release ${record.releaseId}`));
+        card.appendChild(element('p', `State: ${record.state} · source: ${record.downloadId || 'untracked folder'} · command: ${record.commandId || 'none'}`));
+        card.appendChild(element('p', record.outcome || 'No outcome recorded.', 'muted'));
+        if (record.activityCleanupStartedAt) {
+          const cleanupState = record.activityCleanupCompletedAt ? 'verified complete' : 'indeterminate/incomplete';
+          card.appendChild(element('p', `Activity cleanup: ${cleanupState} · ${record.activityCleanupOutcome || 'No outcome recorded.'}`, record.activityCleanupCompletedAt ? 'success' : 'error'));
+        }
+        const list = element('ul');
+        (record.files || []).forEach(file => list.appendChild(element('li', `${file.sourcePath} → ${file.importedPath} (track ${file.trackId}, history ${file.historyId})`)));
+        card.appendChild(list);
+        if (record.legacy) card.appendChild(element('p', 'Legacy record: exact destination evidence is unavailable, so rollback is disabled.', 'muted'));
+        if (record.canRollback) {
+          const confirmation = document.createElement('input'); confirmation.type = 'text'; confirmation.placeholder = 'Type ROLLBACK'; confirmation.autocomplete = 'off';
+          const rollback = element('button', 'Rollback imported hardlinks', 'danger'); rollback.disabled = true;
+          const output = element('div', '', 'statusline');
+          confirmation.addEventListener('input', () => { rollback.disabled = confirmation.value !== 'ROLLBACK'; });
+          rollback.addEventListener('click', async () => {
+            rollback.disabled = true; confirmation.disabled = true;
+            try {
+              const result = await action('rollback', {approvalId: record.approvalId, rollbackConfirmation: 'ROLLBACK'});
+              setCardStatus(output, result.message, 'success'); await loadHistory();
+            } catch (error) { setCardStatus(output, `Rollback stopped: ${error.message}`, 'error'); }
+          });
+          card.appendChild(confirmation); card.appendChild(document.createTextNode(' ')); card.appendChild(rollback); card.appendChild(output);
+        }
+        history.appendChild(card);
+      });
+      if (!(records || []).length) history.appendChild(element('p', 'No completed import records.', 'muted'));
+    } catch (error) { history.replaceChildren(element('p', `History unavailable: ${error.message}`, 'error')); }
+  }
+
   async function initialize() {
     try {
       const initResponse = await fetch(basePath + '/initialize.json', {credentials: 'same-origin'});
@@ -445,6 +485,8 @@
       if (!provider) throw new Error(`Saved AI Import provider ${providerId} was not found.`);
       connection.textContent = `Connected to ${init.instanceName || 'Lidarr'} ${init.version || ''}`;
       discoverButton.addEventListener('click', discover);
+      document.getElementById('refresh-history').addEventListener('click', loadHistory);
+      await loadHistory();
       if (window.opener && typeof window.opener.onCompleteOauth === 'function') {
         window.opener.onCompleteOauth('?aiImportOpened=true', () => {});
       }

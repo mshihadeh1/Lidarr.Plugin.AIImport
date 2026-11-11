@@ -12,6 +12,8 @@ using NzbDrone.Core.Music;
 using Lidarr.Plugin.AIImport.Workflows;
 using Lidarr.Plugin.AIImport.Filesystem;
 using NzbDrone.Core.History;
+using NzbDrone.Core.Download;
+using Lidarr.Plugin.AIImport.Approval;
 
 namespace Lidarr.Plugin.AIImport.Lidarr;
 
@@ -24,6 +26,8 @@ public interface IInProcessLidarrGateway
         new(GetManualImports(downloadId), 0, 0);
     ManualImportScanResult GetUntrackedManualImportScan(string folderPath);
     IReadOnlyList<ReleaseCandidate> GetReleaseCandidates(int albumId);
+    void RemoveVerifiedImportFromActivity(string downloadId) =>
+        throw new NotSupportedException("Verified activity cleanup is unavailable from this gateway.");
 }
 
 public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
@@ -36,6 +40,8 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
     private readonly IRuntimeInfo _runtimeInfo;
     private readonly IConfigFileProvider _config;
     private readonly ImportedSourceReconciler _importedSources;
+    private readonly IIgnoredDownloadService _ignoredDownloads;
+    private readonly ApprovalStore _approvals;
 
     public InProcessLidarrGateway(
         ITrackedDownloadService trackedDownloads,
@@ -48,7 +54,9 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
         IAppFolderInfo appFolderInfo,
         IHistoryService history,
         IMediaFileService mediaFiles,
-        IFileIdentityProvider identities)
+        IFileIdentityProvider identities,
+        IIgnoredDownloadService ignoredDownloads,
+        ApprovalStore approvals)
     {
         _trackedDownloads = trackedDownloads;
         _manualImports = manualImports;
@@ -58,6 +66,8 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
         _runtimeInfo = runtimeInfo;
         _config = config;
         _importedSources = new ImportedSourceReconciler(history, mediaFiles, tracks, identities);
+        _ignoredDownloads = ignoredDownloads;
+        _approvals = approvals;
         new StandaloneStatePaths(appFolderInfo).ConfigureAuthorizationEnvironment();
     }
 
@@ -325,6 +335,59 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
         }
 
         return result;
+    }
+
+    public void RemoveVerifiedImportFromActivity(string downloadId)
+    {
+        if (string.IsNullOrWhiteSpace(downloadId))
+            throw new ArgumentException("A tracked download ID is required.", nameof(downloadId));
+        var tracked = _trackedDownloads.Find(downloadId)
+            ?? throw new InvalidDataException("The verified import is no longer present in Lidarr activity.");
+        if (tracked.State is not (TrackedDownloadState.ImportBlocked or TrackedDownloadState.ImportFailed or TrackedDownloadState.Imported))
+            throw new InvalidOperationException("Only a completed, blocked, or failed tracked import may be removed from activity.");
+        var initialItem = tracked.ImportItem ?? tracked.DownloadItem
+            ?? throw new InvalidDataException("The tracked download has no import item.");
+        var initialPath = initialItem.OutputPath.FullPath;
+        if (!string.Equals(initialItem.DownloadId, downloadId, StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(initialPath) || !Path.IsPathFullyQualified(initialPath))
+            throw new InvalidOperationException("Tracked download identity is incomplete before cleanup.");
+        var initialState = tracked.State;
+        var scan = GetManualImportScan(downloadId);
+        if (scan.Files.Count != 0 || scan.AlreadyImportedCount == 0 || scan.IndeterminateCount != 0)
+            throw new InvalidOperationException("A fresh scan did not classify every source as an already-imported verified hardlink.");
+        var current = _trackedDownloads.Find(downloadId)
+            ?? throw new InvalidOperationException("The tracked download disappeared during cleanup verification.");
+        var currentItem = current.ImportItem ?? current.DownloadItem
+            ?? throw new InvalidOperationException("The tracked download lost its import item during cleanup verification.");
+        if (current.State != initialState ||
+            !string.Equals(currentItem.DownloadId, downloadId, StringComparison.Ordinal) ||
+            !string.Equals(currentItem.OutputPath.FullPath, initialPath, StringComparison.Ordinal))
+            throw new InvalidOperationException("Tracked download identity changed during cleanup verification.");
+        _approvals.BeginActivityCleanupAsync(downloadId, CancellationToken.None).GetAwaiter().GetResult();
+        try
+        {
+            if (!_ignoredDownloads.IgnoreDownload(current))
+                throw new InvalidOperationException("Lidarr refused to persist the ignored-download marker.");
+            _trackedDownloads.StopTracking(downloadId);
+            if (_trackedDownloads.Find(downloadId) is not null)
+                throw new InvalidOperationException("Lidarr still tracks the download after cleanup.");
+        }
+        catch (Exception exception)
+        {
+            try
+            {
+                _approvals.CompleteActivityCleanupAsync(
+                    downloadId, false,
+                    $"Activity cleanup is indeterminate: {exception.Message}",
+                    CancellationToken.None).GetAwaiter().GetResult();
+            }
+            catch { /* Preserve the external-state failure; the started audit remains durable and visibly incomplete. */ }
+            throw;
+        }
+        _approvals.CompleteActivityCleanupAsync(
+            downloadId, true,
+            "Ignored the verified download, stopped Lidarr tracking, and verified that the activity entry was absent without deleting download-client data.",
+            CancellationToken.None).GetAwaiter().GetResult();
     }
 
     private static TrackedImportState ToState(TrackedDownloadState state) => state switch

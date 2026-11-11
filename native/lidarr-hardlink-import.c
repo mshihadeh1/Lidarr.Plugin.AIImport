@@ -6,6 +6,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <linux/openat2.h>
+#include <linux/fs.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -13,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
+#include <sys/random.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <time.h>
@@ -573,12 +575,105 @@ static void verify_result_command(const char *authorization_path, const char *au
     _exit(0);
 }
 
+static bool parse_u64(const char *value, uint64_t *result)
+{
+    if (value == NULL || *value == '\0' || *value == '-') return false;
+    errno = 0;
+    char *end = NULL;
+    uintmax_t parsed = strtoumax(value, &end, 10);
+    if (errno != 0 || end == value || *end != '\0' || parsed > UINT64_MAX) return false;
+    *result = (uint64_t)parsed;
+    return true;
+}
+
+static void unlink_exact_command(const char *source_path, const char *destination_path,
+    const char *device_value, const char *inode_value, const char *size_value)
+{
+    uint64_t expected_device, expected_inode, expected_size;
+    if (!safe_absolute_path(source_path) || !safe_absolute_path(destination_path) ||
+        !valid_utf8((const unsigned char *)source_path, strlen(source_path)) ||
+        !valid_utf8((const unsigned char *)destination_path, strlen(destination_path)) ||
+        !parse_u64(device_value, &expected_device) || !parse_u64(inode_value, &expected_inode) ||
+        !parse_u64(size_value, &expected_size) || expected_inode == 0 || expected_size > INT64_MAX)
+        fail(EXIT_ARGUMENTS, "exact unlink arguments are invalid");
+
+    char *destination_copy = strdup(destination_path + 1);
+    if (destination_copy == NULL) fail(EXIT_PLATFORM, "memory allocation failed");
+    char *separator = strrchr(destination_copy, '/');
+    const char *destination_name; const char *destination_parent;
+    if (separator == NULL) { destination_parent = "."; destination_name = destination_copy; }
+    else { *separator = '\0'; destination_parent = destination_copy; destination_name = separator + 1; }
+    if (*destination_name == '\0' || strcmp(destination_name, ".") == 0 || strcmp(destination_name, "..") == 0)
+        fail(EXIT_ARGUMENTS, "destination basename is invalid");
+
+    int root = open("/", O_PATH | O_DIRECTORY | O_CLOEXEC);
+    int source = root < 0 ? -1 : secure_openat2(root, source_path + 1, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    int parent = root < 0 ? -1 : secure_openat2(root, destination_parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int destination = parent < 0 ? -1 : openat(parent, destination_name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    struct stat source_status, destination_status, parent_status;
+    if (source < 0 || parent < 0 || destination < 0 ||
+        fstat(source, &source_status) != 0 || fstat(destination, &destination_status) != 0 ||
+        fstat(parent, &parent_status) != 0 || !S_ISREG(source_status.st_mode) ||
+        !S_ISREG(destination_status.st_mode) ||
+        (uint64_t)source_status.st_dev != expected_device || (uint64_t)source_status.st_ino != expected_inode ||
+        (uint64_t)source_status.st_size != expected_size ||
+        destination_status.st_dev != source_status.st_dev || destination_status.st_ino != source_status.st_ino ||
+        destination_status.st_size != source_status.st_size ||
+        !path_still_names_inode(root, source_path, &source_status) ||
+        !path_still_names_inode(root, destination_path, &source_status) ||
+        !directory_path_still_names_inode(root, destination_parent, &parent_status))
+        fail(EXIT_DESTINATION, "source or destination no longer names the audited hardlink");
+    test_pause("AIIMPORT_TEST_BEFORE_UNLINK");
+    if (!path_still_names_inode(root, source_path, &source_status) ||
+        !path_still_names_inode(root, destination_path, &source_status) ||
+        !directory_path_still_names_inode(root, destination_parent, &parent_status))
+        fail(EXIT_DESTINATION, "audited hardlink changed before unlink");
+    test_pause("AIIMPORT_TEST_AFTER_UNLINK_CHECK");
+
+    /* Linux has no conditional unlink-by-inode operation. Atomically capture the
+       directory entry under an unpredictable, non-existing name first, then
+       verify the captured inode before deleting it. A replacement racing this
+       operation is restored and never unlinked. */
+    uint64_t nonce;
+    if (getrandom(&nonce, sizeof(nonce), 0) != (ssize_t)sizeof(nonce))
+        fail(EXIT_PLATFORM, "cannot create an exact-unlink quarantine name");
+    char quarantine[96];
+    if (snprintf(quarantine, sizeof(quarantine), ".aiimport-rollback-%ld-%016" PRIx64,
+            (long)getpid(), nonce) < 0)
+        fail(EXIT_PLATFORM, "cannot create an exact-unlink quarantine name");
+    if (syscall(SYS_renameat2, parent, destination_name, parent, quarantine, RENAME_NOREPLACE) != 0)
+        fail(EXIT_DESTINATION, "cannot atomically capture the audited destination");
+    int captured = openat(parent, quarantine, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    struct stat captured_status;
+    if (captured < 0 || fstat(captured, &captured_status) != 0 ||
+        !same_regular_inode(captured, &source_status))
+    {
+        if (syscall(SYS_renameat2, parent, quarantine, parent, destination_name, RENAME_NOREPLACE) != 0)
+            fail(EXIT_DESTINATION, "destination changed during exact unlink and could not be restored");
+        fail(EXIT_DESTINATION, "destination changed during exact unlink; replacement was preserved");
+    }
+    if (!path_still_names_inode(root, source_path, &source_status))
+    {
+        if (syscall(SYS_renameat2, parent, quarantine, parent, destination_name, RENAME_NOREPLACE) != 0)
+            fail(EXIT_DESTINATION, "source changed during exact unlink and destination could not be restored");
+        fail(EXIT_SOURCE, "source changed during exact unlink; destination was preserved");
+    }
+    if (unlinkat(parent, quarantine, 0) != 0 || fsync(parent) != 0)
+        fail(EXIT_DESTINATION, "exact destination unlink failed");
+    if (!path_still_names_inode(root, source_path, &source_status))
+        fail(EXIT_SOURCE, "source identity changed during unlink");
+    dprintf(STDOUT_FILENO, "hardlink import: exact audited destination unlinked\n");
+    _exit(0);
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 4 && strcmp(argv[1], "--publish-approved") == 0)
         publish_approved_from_stdin(argv[2], argv[3]);
     if (argc == 5 && strcmp(argv[1], "--verify-result") == 0)
         verify_result_command(argv[2], argv[3], argv[4]);
+    if (argc == 7 && strcmp(argv[1], "--unlink-exact") == 0)
+        unlink_exact_command(argv[2], argv[3], argv[4], argv[5], argv[6]);
     if (argc == 3 && strcmp(argv[1], "--inspect") == 0)
     {
         const char *path = argv[2];

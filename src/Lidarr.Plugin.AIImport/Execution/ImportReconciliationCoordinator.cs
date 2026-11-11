@@ -55,6 +55,7 @@ public sealed class ImportReconciliationCoordinator
                 await _approvals.CompleteVerifiedReconciliationAsync(
                     approvalId,
                     result.Message,
+                    result.Files ?? Array.Empty<ReconciledImportFile>(),
                     CancellationToken.None).ConfigureAwait(false);
             }
             return result;

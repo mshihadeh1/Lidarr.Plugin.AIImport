@@ -309,6 +309,36 @@ if wait "$pid" 2>/dev/null; then fail "SIGKILL test unexpectedly succeeded"; fi
 [ "$(stat -c '%d:%i' "$TMP/source/interrupted.flac")" = "$(stat -c '%d:%i' "$TMP/library/interrupted.flac")" ] || fail "interrupted hardlink missing"
 run_helper "$TMP/source/interrupted.flac" "$TMP/library/interrupted.flac" || fail "interrupted retry was not idempotent"
 
+printf 'rollback source\n' > "$TMP/source/rollback.flac"
+run_helper "$TMP/source/rollback.flac" "$TMP/library/rollback.flac"
+rollback_identity=$(stat -c '%d %i %s' "$TMP/source/rollback.flac")
+set -- $rollback_identity
+"$HELPER" --unlink-exact "$TMP/source/rollback.flac" "$TMP/library/rollback.flac" "$1" "$2" "$3"
+[ -e "$TMP/source/rollback.flac" ] || fail "exact unlink removed the source"
+[ ! -e "$TMP/library/rollback.flac" ] || fail "exact unlink retained the destination"
+ln "$TMP/source/rollback.flac" "$TMP/library/rollback-race.flac"
+hook="$TMP/rollback-race"
+AIIMPORT_TEST_AFTER_UNLINK_CHECK=$hook "$HELPER" --unlink-exact \
+    "$TMP/source/rollback.flac" "$TMP/library/rollback-race.flac" "$1" "$2" "$3" & pid=$!
+wait_marker "$hook"
+rm "$TMP/library/rollback-race.flac"
+printf 'rollback replacement sentinel\n' > "$TMP/library/rollback-race.flac"
+: > "$hook.go"
+if wait "$pid"; then fail "exact unlink accepted a raced destination replacement"; fi
+[ "$(cat "$TMP/library/rollback-race.flac")" = "rollback replacement sentinel" ] ||
+    fail "exact unlink deleted or changed a raced destination replacement"
+ln "$TMP/source/rollback.flac" "$TMP/library/rollback-wrong.flac"
+if "$HELPER" --unlink-exact "$TMP/source/rollback.flac" "$TMP/library/rollback-wrong.flac" "$1" "$((2+1))" "$3"; then
+    fail "exact unlink accepted a wrong inode"
+fi
+[ -e "$TMP/library/rollback-wrong.flac" ] || fail "wrong-identity unlink removed the destination"
+rm "$TMP/library/rollback-wrong.flac"
+ln -s "$TMP/source/rollback.flac" "$TMP/library/rollback-symlink.flac"
+if "$HELPER" --unlink-exact "$TMP/source/rollback.flac" "$TMP/library/rollback-symlink.flac" "$1" "$2" "$3"; then
+    fail "exact unlink accepted a destination symlink"
+fi
+[ -L "$TMP/library/rollback-symlink.flac" ] || fail "symlink test removed the symlink"
+
 printf 'cross-device source\n' > "$TMP/source/cross-device.flac"
 if [ "$(stat -c '%d' "$TMP/source/cross-device.flac")" != "$(stat -c '%d' /dev/shm)" ]; then
     cross="/dev/shm/lidarr-ai-import-native-test-$$"

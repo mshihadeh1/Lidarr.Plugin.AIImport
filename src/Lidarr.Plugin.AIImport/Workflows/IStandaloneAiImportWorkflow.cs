@@ -13,6 +13,8 @@ public interface IStandaloneAiImportWorkflow
     ImportExecutionStarted Execute(string approvalId, string confirmation);
     ImportReconciliationResult Reconcile(string approvalId);
     ApprovalStatusDto Status(string approvalId);
+    IReadOnlyList<ImportReviewDto> ReviewImports();
+    ImportRollbackResult Rollback(string approvalId, string confirmation);
 }
 
 public sealed record ApprovalCreatedDto(string ApprovalId, DateTimeOffset ExpiresAt);
@@ -34,6 +36,7 @@ public sealed class StandaloneAiImportWorkflow : IStandaloneAiImportWorkflow
     private readonly ImportReconciliationCoordinator _reconciliation;
     private readonly ManualMappingService _manualMapping;
     private readonly LibraryAdditionService _libraryAddition;
+    private readonly ImportReviewService _reviews;
 
 
     public StandaloneAiImportWorkflow(
@@ -42,7 +45,8 @@ public sealed class StandaloneAiImportWorkflow : IStandaloneAiImportWorkflow
         ImportExecutionService execution,
         ImportReconciliationCoordinator reconciliation,
         ManualMappingService manualMapping,
-        LibraryAdditionService libraryAddition)
+        LibraryAdditionService libraryAddition,
+        ImportReviewService reviews)
     {
         _approval = approval;
         _store = store;
@@ -50,6 +54,7 @@ public sealed class StandaloneAiImportWorkflow : IStandaloneAiImportWorkflow
         _reconciliation = reconciliation;
         _manualMapping = manualMapping;
         _libraryAddition = libraryAddition;
+        _reviews = reviews;
         _store.RecoverInterruptedExecutionsAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
@@ -96,6 +101,11 @@ public sealed class StandaloneAiImportWorkflow : IStandaloneAiImportWorkflow
         return new ApprovalStatusDto(record.ApprovalId, record.AnalysisId, record.State, record.ExpiresAt,
             record.CommandId, record.CommandStatus, record.Outcome);
     }
+
+    public IReadOnlyList<ImportReviewDto> ReviewImports() => _reviews.List();
+
+    public ImportRollbackResult Rollback(string approvalId, string confirmation) =>
+        _reviews.Rollback(Required(approvalId, nameof(approvalId)), Required(confirmation, nameof(confirmation)));
 
     private static string Required(string? value, string name) =>
         !string.IsNullOrWhiteSpace(value) ? value : throw new ArgumentException($"{name} is required.", name);

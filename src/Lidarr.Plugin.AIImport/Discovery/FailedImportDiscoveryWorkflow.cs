@@ -14,6 +14,7 @@ namespace Lidarr.Plugin.AIImport.Discovery;
 
 public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
 {
+    private enum YoloMutationOutcome { None, Mutated, Halted }
     public const string CompatibleLidarrVersion = "3.1.2.4913";
     public const int MaxUntrackedFoldersPerScan = 25;
     private static readonly SemaphoreSlim DiscoveryGate = new(1, 1);
@@ -93,7 +94,25 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         DiscoveryGate.Wait();
         try
         {
-            return DiscoverCore(settings);
+            var allDiagnostics = new List<AiImportDiscoveryDiagnostic>();
+            var mutations = 0;
+            while (true)
+            {
+                var pass = DiscoverCore(settings, mutations < 25);
+                allDiagnostics.AddRange(pass.Result.Diagnostics);
+                if (!pass.Mutated)
+                    return pass.Result with { Diagnostics = allDiagnostics.ToArray(), YoloContinuation = false };
+                mutations++;
+                if (mutations != 25) continue;
+
+                // Never expose the snapshot that preceded the final allowed mutation.
+                var fresh = DiscoverCore(settings, false).Result;
+                allDiagnostics.AddRange(fresh.Diagnostics);
+                allDiagnostics.Add(new AiImportDiscoveryDiagnostic(
+                    "yolo-batch", 0, 0,
+                    "YOLO stopped after 25 successful mutations. A later discovery may continue from this fresh state."));
+                return fresh with { Diagnostics = allDiagnostics.ToArray(), YoloContinuation = true };
+            }
         }
         finally
         {
@@ -101,7 +120,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         }
     }
 
-    private AiImportDiscoverResult DiscoverCore(AiImportSettings settings)
+    private (AiImportDiscoverResult Result, bool Mutated) DiscoverCore(AiImportSettings settings, bool allowMutation)
     {
         AiImportWorkflowDiagnostics.Info("discover", "started", detail: $"yolo={settings.YoloMode}");
         if (!string.Equals(_gateway.Version, CompatibleLidarrVersion, StringComparison.Ordinal))
@@ -110,7 +129,8 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         }
 
         var failed = _gateway.GetTrackedDownloads()
-            .Where(x => x.State is TrackedImportState.ImportBlocked or TrackedImportState.ImportFailed)
+            .Where(x => x.State is TrackedImportState.ImportBlocked or TrackedImportState.ImportFailed ||
+                        settings.YoloMode && x.State == TrackedImportState.Imported)
             .GroupBy(x => x.DownloadId, StringComparer.Ordinal)
             .Select(x => x.OrderBy(item => item.Id).First())
             .OrderBy(x => x.Id)
@@ -119,6 +139,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
 
         var analyses = new List<AiImportAnalysisDto>();
         var diagnostics = new List<AiImportDiscoveryDiagnostic>();
+        var automationHalted = false;
         foreach (var item in failed)
         {
             try
@@ -128,7 +149,33 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                     scan, item.DownloadId, null, AiImportSourceKinds.Queue, item.Title, item.AlbumId, settings,
                     out var diagnostic);
                 if (diagnostic is not null) diagnostics.Add(diagnostic);
-                if (analysis is not null) analyses.Add(analysis);
+                if (analysis is not null)
+                {
+                    analyses.Add(analysis);
+                }
+                else if (scan.Files.Count == 0 && scan.AlreadyImportedCount > 0 && scan.IndeterminateCount == 0)
+                {
+                    if (settings.YoloMode && allowMutation)
+                    {
+                        if (diagnostic is not null) diagnostics.Remove(diagnostic);
+                        try
+                        {
+                            _gateway.RemoveVerifiedImportFromActivity(item.DownloadId);
+                            diagnostics.Add(new AiImportDiscoveryDiagnostic(
+                                item.DownloadId, scan.AlreadyImportedCount, 0,
+                                "Removed the fully verified import from Lidarr activity without deleting download-client data; rediscovering from a fresh snapshot."));
+                            _analysisStore?.Replace([]);
+                            return (new AiImportDiscoverResult([], diagnostics.ToArray(), true), true);
+                        }
+                        catch (Exception exception)
+                        {
+                            diagnostics.Add(new AiImportDiscoveryDiagnostic(
+                                item.DownloadId, scan.AlreadyImportedCount, 0,
+                                $"The import is verified, but its stale Lidarr activity entry could not be removed: {exception.Message} Automatic processing stopped."));
+                            automationHalted = true;
+                        }
+                    }
+                }
             }
             catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
             {
@@ -140,10 +187,15 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         var folderAnalyses = ScanUntrackedFolders(settings, diagnostics);
         analyses.AddRange(folderAnalyses);
 
-        if (settings.YoloMode)
+        var libraryOutcome = settings.YoloMode && allowMutation && !automationHalted
+            ? ApplyYoloMode(analyses, settings, diagnostics)
+            : YoloMutationOutcome.None;
+        if (libraryOutcome == YoloMutationOutcome.Mutated)
         {
-            ApplyYoloMode(analyses, settings, diagnostics);
+            _analysisStore?.Replace([]);
+            return (new AiImportDiscoverResult([], diagnostics.ToArray(), true), true);
         }
+        if (libraryOutcome == YoloMutationOutcome.Halted) automationHalted = true;
 
         _analysisStore?.Replace(analyses.Select(x =>
             new StoredStandaloneAnalysis(x.AnalysisId, x.DownloadId, x.Proposal)
@@ -151,20 +203,27 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                 FolderPath = x.FolderPath,
                 AutomatedOverride = x.AutomatedOverride
             }).ToArray());
-        if (settings.YoloMode && _analysisStore is not null && _yoloCoordinator is not null)
+        if (settings.YoloMode && allowMutation && !automationHalted && analyses.Count > 0 &&
+            _analysisStore is not null && _yoloCoordinator is not null)
         {
-            foreach (var result in _yoloCoordinator.Process(analyses))
+            var result = _yoloCoordinator.ProcessNext(analyses);
+            if (result is not null)
             {
                 diagnostics.Add(new AiImportDiscoveryDiagnostic(
                     result.AnalysisId,
                     0,
                     string.Equals(result.Status, "indeterminate", StringComparison.Ordinal) ? 1 : 0,
                     $"YOLO import {result.Status}: {result.Message}"));
+                if (string.Equals(result.Status, "complete", StringComparison.Ordinal))
+                {
+                    _analysisStore.Replace([]);
+                    return (new AiImportDiscoverResult([], diagnostics.ToArray(), true), true);
+                }
             }
         }
         AiImportWorkflowDiagnostics.Info(
             "discover", "completed", detail: $"queue={failed.Length};analyses={analyses.Count};diagnostics={diagnostics.Count}");
-        return new AiImportDiscoverResult(analyses.ToArray(), diagnostics.ToArray(), settings.YoloMode);
+        return (new AiImportDiscoverResult(analyses.ToArray(), diagnostics.ToArray(), settings.YoloMode), false);
     }
 
     private List<AiImportAnalysisDto> ScanUntrackedFolders(
@@ -497,73 +556,41 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         }
     }
 
-    private void ApplyYoloMode(
+    private YoloMutationOutcome ApplyYoloMode(
         List<AiImportAnalysisDto> analyses,
         AiImportSettings settings,
         List<AiImportDiscoveryDiagnostic> diagnostics)
     {
-        if (_yolo is null) return;
+        if (_yolo is null) return YoloMutationOutcome.None;
 
-        for (var i = 0; i < analyses.Count; i++)
+        foreach (var analysis in analyses)
         {
-            var analysis = analyses[i];
             var addition = analysis.LibraryAddition;
             if (addition is null) continue;
-
             var sourceId = string.IsNullOrWhiteSpace(analysis.DownloadId) ? analysis.FolderPath ?? string.Empty : analysis.DownloadId;
-
-            LibraryAdditionCreatedDto created;
             try
             {
-                created = _yolo.TryAddTaggedAlbum(addition, settings);
+                var created = _yolo.TryAddTaggedAlbum(addition, settings);
+                if (created.State != "complete")
+                {
+                    diagnostics.Add(new AiImportDiscoveryDiagnostic(
+                        sourceId, 0, 0,
+                        $"YOLO mode: {created.Outcome ?? "automatic library addition did not complete"}. Automatic processing stopped."));
+                    return YoloMutationOutcome.Halted;
+                }
+                diagnostics.Add(new AiImportDiscoveryDiagnostic(sourceId, 0, 0,
+                    "YOLO mode: verified library addition completed; discarding the full snapshot and rediscovering."));
+                return YoloMutationOutcome.Mutated;
             }
             catch (Exception exception)
             {
                 diagnostics.Add(new AiImportDiscoveryDiagnostic(
                     sourceId, 0, 0,
-                    $"YOLO mode: automatic library addition failed ({exception.Message}). Use the manual add flow on the analysis card."));
-                continue;
+                    $"YOLO mode: automatic library addition failed ({exception.Message}). Automatic processing stopped."));
+                return YoloMutationOutcome.Halted;
             }
-
-            if (created.State != "complete")
-            {
-                diagnostics.Add(new AiImportDiscoveryDiagnostic(
-                    sourceId, 0, 0,
-                    $"YOLO mode: {created.Outcome ?? "automatic library addition did not complete"}. Use the manual add flow on the analysis card."));
-                continue;
-            }
-
-            ManualImportScanResult rescan;
-            int? queueAlbumId = null;
-            try
-            {
-                if (analysis.FolderPath is not null)
-                {
-                    rescan = _gateway.GetUntrackedManualImportScan(analysis.FolderPath);
-                }
-                else
-                {
-                    queueAlbumId = _gateway.GetTrackedDownloads()
-                        .FirstOrDefault(x =>
-                            string.Equals(x.DownloadId, analysis.DownloadId, StringComparison.Ordinal) &&
-                            x.State is TrackedImportState.ImportBlocked or TrackedImportState.ImportFailed)?.AlbumId;
-                    rescan = _gateway.GetManualImportScan(analysis.DownloadId);
-                }
-            }
-            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException or InvalidDataException)
-            {
-                diagnostics.Add(new AiImportDiscoveryDiagnostic(
-                    sourceId, 0, 0,
-                    $"YOLO mode: library addition completed but the source became unavailable ({exception.Message}). Run Discover again."));
-                continue;
-            }
-
-            var reanalyzed = AnalyzeScan(
-                rescan, analysis.DownloadId, analysis.FolderPath, analysis.SourceKind, analysis.Title,
-                queueAlbumId, settings, out var reDiagnostic);
-            if (reDiagnostic is not null) diagnostics.Add(reDiagnostic);
-            if (reanalyzed is not null) analyses[i] = reanalyzed;
         }
+        return YoloMutationOutcome.None;
     }
 
     public static string ComputeAnalysisId(

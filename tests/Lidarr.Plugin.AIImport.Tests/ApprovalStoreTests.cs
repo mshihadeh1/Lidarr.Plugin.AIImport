@@ -1,11 +1,43 @@
 using System.Text.Json;
 using Lidarr.Plugin.AIImport.Approval;
+using Lidarr.Plugin.AIImport.Filesystem;
+using System.Text.Json.Nodes;
 
 namespace Lidarr.Plugin.AIImport.Tests;
 
 [TestFixture]
 public sealed class ApprovalStoreTests
 {
+    [Test]
+    public async Task Persists_verified_activity_cleanup_outcome_on_the_owning_import_record()
+    {
+        using var temp = new TempDirectory();
+        var store = new ApprovalStore(Path.Combine(temp.Path, "approvals.json"));
+        var plan = new ApprovedImportPlan(
+            "analysis", "download-1", 5, 10, 101, "safety",
+            [new ApprovedImportFile(
+                "source-1", 77, "/downloads/track.flac", 1001,
+                new JsonObject { ["quality"] = new JsonObject { ["id"] = 1 } },
+                0, "download-1", 123,
+                new FileIdentity(1, 2, 123, 1, 0, 1, 0, 0x1A4, 1000, 1000, 2))],
+            "/library");
+        var created = await store.CreateAsync("analysis", JsonSerializer.SerializeToElement(plan),
+            TimeSpan.FromMinutes(15), CancellationToken.None);
+        await store.BeginExecutionAsync(created.ApprovalId, created.Token, "analysis", CancellationToken.None);
+        await store.CompleteAsync(created.ApprovalId, ApprovalState.Succeeded, "verified", CancellationToken.None);
+
+        await store.BeginActivityCleanupAsync("download-1", CancellationToken.None);
+        await store.CompleteActivityCleanupAsync("download-1", true, "verified absent", CancellationToken.None);
+        var record = await store.GetAsync(created.ApprovalId, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(record!.ActivityCleanupStartedAt, Is.Not.Null);
+            Assert.That(record.ActivityCleanupCompletedAt, Is.Not.Null);
+            Assert.That(record.ActivityCleanupOutcome, Is.EqualTo("verified absent"));
+        });
+    }
+
     [Test]
     public async Task Waits_for_cross_process_lock_before_reading_state()
     {
@@ -43,7 +75,7 @@ public sealed class ApprovalStoreTests
     }
 
     [Test]
-    public async Task Indeterminate_execution_can_be_authenticated_and_completed_only_by_verified_reconciliation()
+    public async Task Indeterminate_execution_rejects_reconciliation_without_exact_file_evidence()
     {
         using var temp = new TempDirectory();
         var store = new ApprovalStore(Path.Combine(temp.Path, "approvals.json"));
@@ -54,13 +86,13 @@ public sealed class ApprovalStoreTests
 
         var record = await store.AuthenticateForReconciliationAsync(
             created.ApprovalId, created.Token, CancellationToken.None);
-        await store.CompleteVerifiedReconciliationAsync(created.ApprovalId, "verified", CancellationToken.None);
+        Assert.ThrowsAsync<ArgumentException>(() =>
+            store.CompleteVerifiedReconciliationAsync(
+                created.ApprovalId, "verified", Array.Empty<ReconciledImportFile>(), CancellationToken.None));
         var completed = await store.GetAsync(created.ApprovalId, CancellationToken.None);
 
         Assert.That(record.State, Is.EqualTo(ApprovalState.Indeterminate));
-        Assert.That(completed!.State, Is.EqualTo(ApprovalState.Succeeded));
-        Assert.ThrowsAsync<ApprovalReplayException>(() =>
-            store.CompleteVerifiedReconciliationAsync(created.ApprovalId, "rewrite", CancellationToken.None));
+        Assert.That(completed!.State, Is.EqualTo(ApprovalState.Indeterminate));
     }
 
     [Test]
