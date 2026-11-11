@@ -300,6 +300,26 @@ public sealed class StandaloneDiscoveryWorkflowTests
     }
 
     [Test]
+    public void Yolo_mode_marks_an_already_deterministic_mapping_as_an_automated_override()
+    {
+        var gateway = new FakeGateway(
+            [new QueueCandidate(1, 10, "failed", TrackedImportState.ImportFailed, "failed")],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>> { ["failed"] = [Source("source-1")] },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release()] });
+        var settings = Settings();
+        settings.YoloMode = true;
+
+        var analysis = new FailedImportDiscoveryWorkflow(gateway, new DeterministicMatcher(), null)
+            .Discover(settings).Analyses.Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(analysis.Proposal.Status, Is.EqualTo(ProposalStatus.Proposed));
+            Assert.That(analysis.AutomatedOverride, Is.True);
+        });
+    }
+
+    [Test]
     public void Ambiguous_candidates_stay_in_manual_review_when_yolo_mode_is_off()
     {
         var alternate = Release() with { Id = 102, ForeignReleaseId = "release-102" };

@@ -160,7 +160,7 @@ jobs:
         with:
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            Standalone in-process Lidarr AI Import plugin. v2.0.0 adds optional unattended YOLO operation: blocked-download and periodic discovery, bounded MusicBrainz edition resolution, exact Lidarr library addition, internal approval, one strict-hardlink command per album, restart recovery, and fail-closed per-file reconciliation. No companion service or separate Lidarr credentials are required.
+            Standalone in-process Lidarr AI Import plugin. v2.0.1 improves YOLO MusicBrainz resolution with bounded exact/normalized alias searches, exact track-count queries, complete pagination up to a fixed safety cap, and explicit unresolved diagnostics. It retains v2.0.0's blocked-download and periodic discovery, exact Lidarr library addition, internal approval, one strict-hardlink command per album, restart recovery, and fail-closed per-file reconciliation. No companion service or separate Lidarr credentials are required.
 
             YOLO is standing authorization, not reduced validation. It requires explicit root-folder, quality-profile, and metadata-profile IDs. The LLM may select only candidates actually returned by the bounded MusicBrainz client. Ambiguous or incomplete candidate windows, source changes, ownership conflicts, existing destinations, cross-filesystem layouts, and uncertain execution state remain blocking.
 

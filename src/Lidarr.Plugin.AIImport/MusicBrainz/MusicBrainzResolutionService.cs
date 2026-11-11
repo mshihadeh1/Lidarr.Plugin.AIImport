@@ -11,9 +11,13 @@ public sealed record MusicBrainzResolutionResult(
     string Explanation,
     int CandidateCount);
 
+public sealed record MusicBrainzResolutionAttempt(
+    MusicBrainzResolutionResult? Result,
+    string Explanation);
+
 public interface IMusicBrainzResolutionService
 {
-    MusicBrainzResolutionResult? Resolve(
+    MusicBrainzResolutionAttempt Resolve(
         AiImportSettings settings,
         IReadOnlyList<SourceFileCandidate> files);
 }
@@ -38,24 +42,26 @@ public sealed class MusicBrainzResolutionService : IMusicBrainzResolutionService
         _llm = llm;
     }
 
-    public MusicBrainzResolutionResult? Resolve(
+    public MusicBrainzResolutionAttempt Resolve(
         AiImportSettings settings,
         IReadOnlyList<SourceFileCandidate> files)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(files);
-        if (files.Count == 0) return null;
+        if (files.Count == 0)
+            return new MusicBrainzResolutionAttempt(null, "the source folder contained no audio files");
 
-        var searched = _musicBrainz.SearchAsync(files, settings.MusicBrainzCandidateLimit, CancellationToken.None)
+        var search = _musicBrainz.SearchAsync(files, settings.MusicBrainzCandidateLimit, CancellationToken.None)
             .GetAwaiter().GetResult();
         // YOLO imports complete albums. Excluding different track counts before the model call
         // prevents a plausible title match from authorizing a partial or expanded edition.
-        var candidates = searched
+        var candidates = search.Candidates
             .Where(x => x.Tracks.Count == files.Count)
             .OrderByDescending(x => x.SearchScore)
             .ThenBy(x => x.ReleaseMusicBrainzId, StringComparer.Ordinal)
             .ToArray();
-        if (candidates.Length == 0) return null;
+        if (candidates.Length == 0)
+            return new MusicBrainzResolutionAttempt(null, search.Explanation);
 
         var payload = new
         {
@@ -99,25 +105,29 @@ public sealed class MusicBrainzResolutionService : IMusicBrainzResolutionService
             JsonSerializer.Serialize(payload),
             CancellationToken.None).GetAwaiter().GetResult();
         var selection = ParseSelection(output);
-        if (!string.Equals(selection.Status, "selected", StringComparison.Ordinal) ||
-            selection.ReleaseMusicBrainzId is null || selection.Confidence < MinimumAutomaticConfidence)
-            return null;
+        if (!string.Equals(selection.Status, "selected", StringComparison.Ordinal) || selection.ReleaseMusicBrainzId is null)
+            return new MusicBrainzResolutionAttempt(null, $"the model declined to select an edition: {selection.Explanation}");
+        if (selection.Confidence < MinimumAutomaticConfidence)
+            return new MusicBrainzResolutionAttempt(null,
+                $"the model confidence {selection.Confidence:P0} was below the required {MinimumAutomaticConfidence:P0}: {selection.Explanation}");
 
         var selected = candidates.SingleOrDefault(x =>
             string.Equals(x.ReleaseMusicBrainzId, selection.ReleaseMusicBrainzId, StringComparison.OrdinalIgnoreCase));
         if (selected is null)
             throw new LlmProtocolException("The model selected a MusicBrainz release that was not supplied.");
 
-        return new MusicBrainzResolutionResult(
-            new LibraryAdditionDto(
-                selected.ArtistMusicBrainzId,
-                selected.ReleaseGroupMusicBrainzId,
-                selected.ReleaseMusicBrainzId,
-                selected.Artist,
-                selected.Title),
-            selection.Confidence,
-            selection.Explanation,
-            candidates.Length);
+        return new MusicBrainzResolutionAttempt(
+            new MusicBrainzResolutionResult(
+                new LibraryAdditionDto(
+                    selected.ArtistMusicBrainzId,
+                    selected.ReleaseGroupMusicBrainzId,
+                    selected.ReleaseMusicBrainzId,
+                    selected.Artist,
+                    selected.Title),
+                selection.Confidence,
+                selection.Explanation,
+                candidates.Length),
+            $"selected {selected.ReleaseMusicBrainzId} from {candidates.Length} complete candidate(s)");
     }
 
     internal static MusicBrainzSelection ParseSelection(string output)
