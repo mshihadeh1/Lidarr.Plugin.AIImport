@@ -59,6 +59,9 @@ public sealed class YoloLibraryAdder : IYoloLibraryAdder
     public LibraryAdditionCreatedDto TryAddTaggedAlbum(LibraryAdditionDto addition, AiImportSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        if (TryResolveExistingArtistDestination(addition, out var existing))
+            return EnsureAlbum(addition, existing);
+
         RootFolder root;
         try
         {
@@ -74,41 +77,12 @@ public sealed class YoloLibraryAdder : IYoloLibraryAdder
             ?? throw new InvalidOperationException("The configured YOLO quality profile is missing.");
         var metadata = _metadataProfiles.All().SingleOrDefault(x => x.Id == settings.YoloMetadataProfileId)
             ?? throw new InvalidOperationException("The configured YOLO metadata profile is missing.");
-        return _client.EnsureAlbum(new LibraryAdditionRequest(
-            addition.ArtistMusicBrainzId,
-            addition.AlbumMusicBrainzId,
-            addition.ReleaseMusicBrainzId,
-            root.Id,
-            quality.Id,
-            metadata.Id));
+        return EnsureAlbum(addition, (root.Id, quality.Id, metadata.Id));
     }
 
     private (int RootFolderId, int QualityProfileId, int MetadataProfileId) ResolveDestination(LibraryAdditionDto addition)
     {
-        Artist? existingArtist = null;
-        try
-        {
-            existingArtist = _artists.FindById(addition.ArtistMusicBrainzId);
-        }
-        catch (Exception)
-        {
-            existingArtist = null;
-        }
-
-        if (existingArtist is not null &&
-            existingArtist.QualityProfileId > 0 && existingArtist.MetadataProfileId > 0 &&
-            !string.IsNullOrWhiteSpace(existingArtist.RootFolderPath))
-        {
-            var existingRoot = _rootFolders.All().FirstOrDefault(x =>
-                string.Equals(
-                    NormalizeRoot(x.Path),
-                    NormalizeRoot(existingArtist.RootFolderPath),
-                    StringComparison.Ordinal));
-            if (existingRoot is not null && existingRoot.Accessible)
-            {
-                return (existingRoot.Id, existingArtist.QualityProfileId, existingArtist.MetadataProfileId);
-            }
-        }
+        if (TryResolveExistingArtistDestination(addition, out var existing)) return existing;
 
         var root = _rootFolders.All().FirstOrDefault(x =>
             x.Accessible && !string.IsNullOrWhiteSpace(x.Path) && Path.IsPathFullyQualified(x.Path))
@@ -123,6 +97,45 @@ public sealed class YoloLibraryAdder : IYoloLibraryAdder
             ?? throw new InvalidOperationException("YOLO mode needs a Lidarr metadata profile.");
         return (root.Id, quality.Id, metadata.Id);
     }
+
+    private bool TryResolveExistingArtistDestination(
+        LibraryAdditionDto addition,
+        out (int RootFolderId, int QualityProfileId, int MetadataProfileId) destination)
+    {
+        destination = default;
+        Artist? artist;
+        try
+        {
+            artist = _artists.FindById(addition.ArtistMusicBrainzId);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+
+        if (artist is null || artist.QualityProfileId <= 0 || artist.MetadataProfileId <= 0 ||
+            string.IsNullOrWhiteSpace(artist.RootFolderPath))
+            return false;
+
+        var root = _rootFolders.All().FirstOrDefault(x =>
+            x.Accessible && !string.IsNullOrWhiteSpace(x.Path) && Path.IsPathFullyQualified(x.Path) &&
+            string.Equals(NormalizeRoot(x.Path), NormalizeRoot(artist.RootFolderPath), StringComparison.Ordinal));
+        if (root is null) return false;
+
+        destination = (root.Id, artist.QualityProfileId, artist.MetadataProfileId);
+        return true;
+    }
+
+    private LibraryAdditionCreatedDto EnsureAlbum(
+        LibraryAdditionDto addition,
+        (int RootFolderId, int QualityProfileId, int MetadataProfileId) destination) =>
+        _client.EnsureAlbum(new LibraryAdditionRequest(
+            addition.ArtistMusicBrainzId,
+            addition.AlbumMusicBrainzId,
+            addition.ReleaseMusicBrainzId,
+            destination.RootFolderId,
+            destination.QualityProfileId,
+            destination.MetadataProfileId));
 
     private static string NormalizeRoot(string path) =>
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
