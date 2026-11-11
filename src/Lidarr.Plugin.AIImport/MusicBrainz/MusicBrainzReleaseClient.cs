@@ -65,7 +65,7 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
         if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
         {
-            _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("Lidarr.Plugin.AIImport", "2.0.1"));
+            _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("Lidarr.Plugin.AIImport", "2.0.2"));
             _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://github.com/mshihadeh1/Lidarr.Plugin.AIImport)"));
         }
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -144,10 +144,10 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
             if (!document.RootElement.TryGetProperty("releases", out var releases) || releases.ValueKind != JsonValueKind.Array)
                 throw new InvalidDataException("MusicBrainz release search returned no releases array.");
             if (!document.RootElement.TryGetProperty("count", out var countElement) ||
-                !countElement.TryGetInt32(out var totalCount) || totalCount < 0)
+                !TryReadInt32(countElement, out var totalCount) || totalCount < 0)
                 throw new InvalidDataException("MusicBrainz release search returned no valid result count.");
             if (!document.RootElement.TryGetProperty("offset", out var offsetElement) ||
-                !offsetElement.TryGetInt32(out var returnedOffset) || returnedOffset != offset)
+                !TryReadInt32(offsetElement, out var returnedOffset) || returnedOffset != offset)
                 throw new InvalidDataException("MusicBrainz release search returned an unexpected result offset.");
             if (totalCount > MaximumSearchResults)
                 return new SearchPageResult(totalCount, true, []);
@@ -165,7 +165,7 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
                 if (SearchTrackCount(item) != trackCount) continue;
                 candidates.Add(new SearchCandidate(
                     id,
-                    item.TryGetProperty("score", out var score) && score.TryGetInt32(out var value) ? value : 0));
+                    item.TryGetProperty("score", out var score) && TryReadInt32(score, out var value) ? value : 0));
             }
             if (offset + SearchWindow >= totalCount) break;
         }
@@ -285,7 +285,7 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
             foreach (var medium in media.EnumerateArray())
             {
                 defaultDisc++;
-                var disc = medium.TryGetProperty("position", out var discElement) && discElement.TryGetInt32(out var discValue)
+                var disc = medium.TryGetProperty("position", out var discElement) && TryReadInt32(discElement, out var discValue)
                     ? discValue
                     : defaultDisc;
                 if (!medium.TryGetProperty("tracks", out var mediumTracks) || mediumTracks.ValueKind != JsonValueKind.Array) continue;
@@ -296,10 +296,10 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
                     if (!track.TryGetProperty("recording", out var recording)) continue;
                     var recordingId = RequiredGuid(recording, "id");
                     if (recordingId == Guid.Empty) continue;
-                    var position = track.TryGetProperty("position", out var positionElement) && positionElement.TryGetInt32(out var positionValue)
+                    var position = track.TryGetProperty("position", out var positionElement) && TryReadInt32(positionElement, out var positionValue)
                         ? positionValue
                         : defaultTrack;
-                    var duration = track.TryGetProperty("length", out var length) && length.TryGetInt32(out var durationValue)
+                    var duration = track.TryGetProperty("length", out var length) && TryReadInt32(length, out var durationValue)
                         ? Math.Max(0, durationValue)
                         : 0;
                     var trackTitle = track.TryGetProperty("title", out var trackTitleElement) && trackTitleElement.ValueKind == JsonValueKind.String
@@ -429,7 +429,7 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
         var total = 0;
         foreach (var medium in media.EnumerateArray())
         {
-            if (!medium.TryGetProperty("track-count", out var count) || !count.TryGetInt32(out var value) || value < 0)
+            if (!medium.TryGetProperty("track-count", out var count) || !TryReadInt32(count, out var value) || value < 0)
                 return 0;
             total = checked(total + value);
         }
@@ -438,6 +438,12 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
 
     private static Guid RequiredGuid(JsonElement element, string property) =>
         Guid.TryParse(RequiredString(element, property), out var value) ? value : Guid.Empty;
+
+    private static bool TryReadInt32(JsonElement element, out int value)
+    {
+        value = default;
+        return element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out value);
+    }
 
     private static string RequiredString(JsonElement element, string property) =>
         element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString())
