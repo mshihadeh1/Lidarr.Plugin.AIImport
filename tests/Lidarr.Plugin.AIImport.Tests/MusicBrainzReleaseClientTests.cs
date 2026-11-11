@@ -108,6 +108,39 @@ public sealed class MusicBrainzReleaseClientTests
     }
 
     [Test]
+    public async Task Treats_null_optional_track_numbers_and_lengths_as_missing_values()
+    {
+        var releaseId = Guid.NewGuid();
+        var releaseGroupId = Guid.NewGuid();
+        var artistId = Guid.NewGuid();
+        var recordingId = Guid.NewGuid();
+        using var handler = new DelegateHandler(_ => JsonResponse($$$"""
+            {
+              "id":"{{{releaseId:D}}}",
+              "title":"Nullable Metadata Album",
+              "release-group":{"id":"{{{releaseGroupId:D}}}"},
+              "artist-credit":[{"artist":{"id":"{{{artistId:D}}}","name":"Nullable Metadata Artist"}}],
+              "media":[{"position":null,"tracks":[
+                {"position":null,"title":"Track One","length":null,"recording":{"id":"{{{recordingId:D}}}","title":"Track One"}}
+              ]}]
+            }
+            """));
+        using var http = new HttpClient(handler);
+        var client = new MusicBrainzReleaseClient(http, TimeProvider.System);
+
+        var result = await client.GetAsync(releaseId, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result!.Tracks, Has.Count.EqualTo(1));
+            Assert.That(result.Tracks[0].DiscNumber, Is.EqualTo(1));
+            Assert.That(result.Tracks[0].TrackNumber, Is.EqualTo(1));
+            Assert.That(result.Tracks[0].DurationMs, Is.Zero);
+        });
+    }
+
+    [Test]
     public async Task Retries_one_transient_service_failure_then_returns_the_authoritative_release()
     {
         var releaseId = Guid.NewGuid();
