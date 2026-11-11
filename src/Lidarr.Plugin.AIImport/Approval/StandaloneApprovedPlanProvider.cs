@@ -95,7 +95,7 @@ public sealed class StandaloneApprovedPlanProvider : IApprovedPlanProvider
         var plan = new ApprovedImportPlan(
             analysisId, stored.DownloadId, proposal.ArtistId.Value, proposal.AlbumId.Value,
             proposal.ReleaseId.Value, _captureSafetyFingerprint(), approved, destinationRoot,
-            stored.HumanOverride, stored.ParentAnalysisId);
+            stored.HumanOverride, stored.ParentAnalysisId, null, stored.AutomatedOverride);
         await _execution.RevalidateManualImportAsync(plan, cancellationToken).ConfigureAwait(false);
         return plan;
     }
@@ -150,7 +150,7 @@ public sealed class StandaloneApprovedPlanProvider : IApprovedPlanProvider
         var plan = new ApprovedImportPlan(
             analysisId, string.Empty, proposal.ArtistId.Value, proposal.AlbumId.Value,
             proposal.ReleaseId.Value, _captureSafetyFingerprint(), approved, destinationRoot,
-            stored.HumanOverride, stored.ParentAnalysisId, folderPath);
+            stored.HumanOverride, stored.ParentAnalysisId, folderPath, stored.AutomatedOverride);
         await _execution.RevalidateManualImportAsync(plan, cancellationToken).ConfigureAwait(false);
         return plan;
     }

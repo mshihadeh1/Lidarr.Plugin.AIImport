@@ -1,5 +1,6 @@
 using Lidarr.Plugin.AIImport.Approval;
 using Lidarr.Plugin.AIImport.Execution;
+using Lidarr.Plugin.AIImport.Diagnostics;
 
 namespace Lidarr.Plugin.AIImport.Workflows;
 
@@ -77,9 +78,15 @@ public sealed class StandaloneAiImportWorkflow : IStandaloneAiImportWorkflow
             .GetAwaiter().GetResult();
     }
 
-    public ImportReconciliationResult Reconcile(string approvalId) =>
-        _reconciliation.ReconcileAsync(Required(approvalId, nameof(approvalId)), string.Empty, CancellationToken.None, trustedInProcess: true)
+    public ImportReconciliationResult Reconcile(string approvalId)
+    {
+        var required = Required(approvalId, nameof(approvalId));
+        AiImportWorkflowDiagnostics.Info("reconcile", "started", required);
+        var result = _reconciliation.ReconcileAsync(required, string.Empty, CancellationToken.None, trustedInProcess: true)
             .GetAwaiter().GetResult();
+        AiImportWorkflowDiagnostics.Info("reconcile", "completed", required, $"status={result.Status}");
+        return result;
+    }
 
     public ApprovalStatusDto Status(string approvalId)
     {

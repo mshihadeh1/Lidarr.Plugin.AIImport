@@ -25,7 +25,8 @@ public sealed record ApprovedImportPlan(
     string DestinationRoot = "",
     bool HumanOverride = false,
     string? ParentAnalysisId = null,
-    string? FolderPath = null);
+    string? FolderPath = null,
+    bool AutomatedOverride = false);
 
 public interface IApprovedPlanProvider
 {

@@ -152,16 +152,18 @@ public sealed class DirectLibraryAdditionClient : ILibraryAdditionClient
                 _releases.SetMonitored(selected[0]);
                 return VerifyComplete(albumMusicBrainzId, artistMusicBrainzId, releaseMusicBrainzId, expectedRoot, request);
             }
-            catch (Exception) when (mutationStarted)
+            catch (Exception exception) when (mutationStarted)
             {
                 // Lidarr service writes are not transactional. Never claim that nothing changed:
                 // return a durable, idempotently resumable partial result after canonical read-back.
                 var artist = _artists.FindById(artistMusicBrainzId);
                 var album = _albums.FindById(albumMusicBrainzId);
+                var detail = exception.Message.Replace('\r', ' ').Replace('\n', ' ').Trim();
+                if (detail.Length > 300) detail = detail[..300];
                 return new LibraryAdditionCreatedDto(
                     artist?.Id ?? 0, album?.Id ?? 0, 0,
                     artistMusicBrainzId, albumMusicBrainzId, releaseMusicBrainzId,
-                    "partial", "Lidarr may have persisted part of the exact MusicBrainz addition. Run Discover, then retry Add only if it is still offered.");
+                    "partial", $"Lidarr may have persisted part of the exact MusicBrainz addition ({detail}). Run Discover, then retry Add only if it is still offered.");
             }
         }
     }
@@ -193,15 +195,21 @@ public sealed class DirectLibraryAdditionClient : ILibraryAdditionClient
             throw new InvalidDataException("The Lidarr album belongs to a different MusicBrainz artist.");
     }
 
-    private static void ValidateArtistSettings(Artist artist, string expectedRoot, LibraryAdditionRequest request)
+    private void ValidateArtistSettings(Artist artist, string expectedRoot, LibraryAdditionRequest request)
     {
-        var actualRoot = string.IsNullOrWhiteSpace(artist.RootFolderPath)
+        var configuredRoot = !string.IsNullOrWhiteSpace(artist.RootFolderPath)
+            ? artist.RootFolderPath
+            : !string.IsNullOrWhiteSpace(artist.Path)
+                ? _rootFolders.GetBestRootFolderPath(artist.Path)
+                : string.Empty;
+        var actualRoot = string.IsNullOrWhiteSpace(configuredRoot)
             ? string.Empty
-            : Path.TrimEndingDirectorySeparator(Path.GetFullPath(artist.RootFolderPath));
+            : Path.TrimEndingDirectorySeparator(Path.GetFullPath(configuredRoot));
         if (!string.Equals(actualRoot, expectedRoot, StringComparison.Ordinal) ||
             artist.QualityProfileId != request.QualityProfileId ||
             artist.MetadataProfileId != request.MetadataProfileId)
-            throw new InvalidOperationException("The existing Lidarr artist uses different root-folder or profile settings. Select its existing settings and try again.");
+            throw new InvalidOperationException(
+                $"The existing Lidarr artist uses different settings (root={actualRoot}, quality={artist.QualityProfileId}, metadata={artist.MetadataProfileId}; expected root={expectedRoot}, quality={request.QualityProfileId}, metadata={request.MetadataProfileId}). Select its existing settings and try again.");
     }
 
     private static Guid ParseMusicBrainzId(string value, string kind)

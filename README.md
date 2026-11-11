@@ -1,15 +1,15 @@
-# Lidarr AI Import v1.1.5
+# Lidarr AI Import v2.0.0
 
-Standalone, approval-gated AI-assisted import matching for **Lidarr 3.1.2.4913**.
+Standalone AI-assisted strict-hardlink imports for **Lidarr 3.1.2.4913**, with optional unattended MusicBrainz-backed YOLO mode.
 
-The plugin runs inside Lidarr. It does not use a companion service, a companion URL, or separate Lidarr credentials. It discovers failed imports, constrains matching to current Lidarr metadata, requires explicit approval, invokes Lidarr's native manual-import pipeline, and permits only verified hardlinks.
+The plugin runs inside Lidarr. It does not use a companion service, companion URL, or separate Lidarr credentials. It discovers failed imports, constrains matching to authoritative Lidarr/MusicBrainz metadata, uses explicit per-album approval by default or internal standing-consent approval in YOLO mode, invokes Lidarr's native manual-import pipeline, and permits only verified hardlinks.
 
 ## Safety model
 
 - Exact Lidarr compatibility: `3.1.2.4913` only.
-- The LLM may rank only candidates supplied by Lidarr; returned IDs and relationships are revalidated. Confidence is advisory and never authorization.
+- The LLM may rank only candidates supplied by Lidarr or the bounded MusicBrainz resolver; returned IDs and relationships are revalidated. Confidence is advisory and never authorization.
 - A user may construct a complete mapping only from current server-supplied Lidarr releases and tracks. The server independently validates exhaustiveness, uniqueness, ownership, source freshness, and destination constraints before creating a new reviewable proposal.
-- Adding a missing artist/album is a separate explicit action, uses exact MusicBrainz IDs read from every source file, and is reconciled through Lidarr's own metadata services before file import is possible.
+- Missing artists/albums are added only through Lidarr's metadata services. Exact tag MBIDs take precedence; YOLO search fallback is bounded, cached, rate-limited, and rejects hidden or ambiguous edition sets.
 - Discovery is read-only.
 - Approval is expiring, single-use, and bound to the current source/Lidarr state.
 - Execution revalidates the plan immediately before submitting it to Lidarr.
@@ -46,7 +46,7 @@ The plugin checks these settings again before authorization and command submissi
 
 ### From a GitHub release
 
-Install `Lidarr.Plugin.AIImport-v1.1.5.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
+Install `Lidarr.Plugin.AIImport-v2.0.0.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
 ### Manual installation
 
@@ -68,7 +68,7 @@ Install `Lidarr.Plugin.AIImport-v1.1.5.net8.0.zip` through Lidarr's plugin suppo
    ```
 
 3. Restart Lidarr.
-4. Confirm **System → Plugins** reports `AI Import` version `1.1.5.0`.
+4. Confirm **System → Plugins** reports `AI Import` version `2.0.0.0`.
 5. Configure the exact Media Management settings listed above and restart Lidarr once more.
 
 ## Configure the LLM endpoint
@@ -85,6 +85,10 @@ In **Settings → Connect**, add and save **AI Import**. Configure:
 - **Disable Model Thinking** for compatible Qwen/llama.cpp endpoints
 
 - **Untracked Download Folders** (optional): absolute folders scanned for albums downloaded outside Lidarr; separate multiple folders with a pipe, comma, or newline. The 25 newest album folders are scanned per discovery. Each root must live on the same filesystem as the destination library root for hardlink import.
+- **YOLO Mode** (optional): standing authorization for unattended discovery, MusicBrainz resolution, library addition, internal approval, strict-hardlink execution, and reconciliation.
+- **YOLO Root Folder ID**, **Quality Profile ID**, and **Metadata Profile ID**: required explicit destinations when YOLO is enabled. The plugin never chooses first/default destinations.
+- **YOLO Scan Interval**: periodic untracked-folder discovery interval, from 5 to 1,440 minutes.
+- **MusicBrainz Candidate Limit**: maximum number of structurally plausible editions fetched in full. The resolver fails closed rather than truncating plausible editions.
 
 Use **Test** before saving. Endpoint credentials remain in Lidarr's provider settings and are not included in workflow state, prompts, action responses, or logs.
 
@@ -100,6 +104,12 @@ Use **Test** before saving. Endpoint credentials remain in Lidarr's provider set
 
 The workspace is served by the plugin through Lidarr's authenticated UI resource pipeline. Lidarr `3.1.2.4913` has no public frontend-plugin API, so this integration is intentionally pinned to that exact version.
 
+### YOLO mode
+
+YOLO mode replaces per-album review with standing consent, not with weaker validation. Blocked/failed tracked downloads trigger discovery, and configured untracked folders are scanned periodically. A complete safe album follows `discover → resolve MusicBrainz if needed → add/refresh Lidarr metadata → map to local IDs → approve internally → authorize one strict-hardlink command → reconcile every file`. Only one album is executed from each fresh discovery snapshot. Pending or interrupted execution blocks new autonomous work while reconciliation continues; it is never automatic retry permission.
+
+MusicBrainz public API requests use an identifying User-Agent, a shared one-request-per-second limiter, bounded transient retries, response-size limits, and caching. The LLM sees only returned candidates. If the bounded search cannot prove that all plausible editions were considered, or more than one edition remains plausible, the album stays in manual review.
+
 Upgrading to v1.1.0 intentionally invalidates analyses created by earlier plugin builds. Restart Lidarr and run **Discover** again before approving anything. Existing executing or indeterminate approvals remain status/reconciliation records; do not retry an uncertain import.
 
 v1.1.1 excludes both Lidarr's null-identity existing-library decisions and source rows proven already imported. Suppression requires one matching import-history event, matching current track-file and track bindings, matching quality/size/flags, and identical source/destination device and inode. Contradictory evidence is excluded from approval and shown as requiring reconciliation. The plugin does not delete or clear Lidarr Activity entries; stale rows may remain visible in Lidarr while the plugin ignores them. For an explicitly human-reviewed proposal, Lidarr must still accept the exact source, artist, album, and release without rejections, but its automatic track guess no longer overrides the user's separately validated track selection. Run **Discover** again after upgrading; do not reuse an older analysis.
@@ -114,7 +124,7 @@ v1.1.5 uses the same reconciled manual-import scan for discovery, human mapping 
 
 v1.2.0 adds **Untracked Download Folders** to the AI Import connect settings. Configured absolute folders are scanned during discovery for albums downloaded outside Lidarr's queue—e.g. files landing directly in the qBittorrent download path (including names renamed by qBittorrent). An untracked folder is eligible when it contains no existing Lidarr track files, its files' tags resolve to at most one Lidarr album, and Lidarr's manual-import review (`/api/v3/import/manual/import`) already assigns the file set to that album. Discovery then reuses the existing verified-candidate pipeline (deterministic first, LLM ranking optional, manual mapping, expiring approval, single-use execution, and reconciliation)—no artist/album add and no manual import are required beforehand. Approval and reconciliation scope untracked sources by folder and album instead of download ID, and the execution payload submits an empty download identity for those files.
 
-v1.3.0 adds **YOLO Mode** to the AI Import connect settings. With it enabled, discovery skips the manual triage steps: tagged artists and albums missing from the library are added automatically (reusing the artist's existing root folder and profiles when the artist is already in the library, otherwise the first accessible root folder and the default quality/metadata profiles), and the best verified mapping is promoted to a proposed mapping without requiring the LLM. YOLO never weakens safety: promoted mappings still pass the strict proposal validator, and nothing is imported until you review the mapping, approve it, and type IMPORT. If an automatic library addition fails, discovery reports why and keeps the manual add flow available on the analysis card.
+v1.3.0 introduced the original discovery-only YOLO mapping promotion. v2.0.0 replaces that behavior with explicit destination/profile configuration, bounded MusicBrainz search, autonomous internal approval/execution/reconciliation, periodic and blocked-download triggers, restart recovery, and serialized discovery. Filesystem, destination, ownership, source-freshness, hardlink-only, and post-import reconciliation protections remain mandatory.
 
 ### Downloads for artists not yet in Lidarr
 
@@ -122,7 +132,7 @@ When qBittorrent sends a failed/blocked download to Lidarr and every source file
 
 Lidarr's add services are not transactional. If an add or refresh fails after a write, the workspace reports a **partial** result rather than claiming that nothing changed. Run **Discover** to reconcile current Lidarr state before retrying. Existing artists must use the selected root folder, quality profile, and metadata profile; mismatches are rejected before mutation.
 
-If those MusicBrainz tags are missing, conflicting, or invalid, the plugin fails closed instead of guessing an artist or release. Tagging a torrent only with the qBittorrent/Lidarr category is enough to route it to Lidarr, but the audio files still need authoritative MusicBrainz artist, release-group, and release identities before an absent artist can be added safely.
+If exact MusicBrainz tags are missing, YOLO may search by consensus artist/album tags and complete track structure. It adds an absent artist only when the bounded MusicBrainz result and LLM selection establish one authoritative release at high confidence. Conflicting tags, incomplete albums, hidden result sets, and ambiguous editions fail closed.
 
 If an execute response is lost or reports `Indeterminate`, do not execute again. Use **Status** and **Reconcile**. `Indeterminate` is never permission to retry automatically.
 
@@ -143,7 +153,7 @@ If an execute response is lost or reports `Indeterminate`, do not execute again.
 
 ```bash
 git submodule update --init --recursive
-VERSION=1.1.5 ./scripts/build.sh
+VERSION=2.0.0 ./scripts/build.sh
 ```
 
 A dirty local verification build requires `ALLOW_DIRTY_BUILD=1` and intentionally does not claim a corresponding-source commit URL. Release packages must be produced from a clean tagged tree.

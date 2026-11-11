@@ -339,7 +339,10 @@ public sealed class StandaloneDiscoveryWorkflowTests
         var gateway = new FakeGateway(
             [],
             new Dictionary<string, IReadOnlyList<SourceFileCandidate>>(),
-            new Dictionary<int, IReadOnlyList<ReleaseCandidate>> { [10] = [Release()] },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>>
+            {
+                [10] = [Release() with { ForeignReleaseId = unlinked.ReleaseMusicBrainzId! }]
+            },
             untrackedScans: new Dictionary<string, ManualImportScanResult> { [albumDir] = new([unlinked], 0, 0) },
             untrackedRescans: new Dictionary<string, ManualImportScanResult> { [albumDir] = new([linked], 0, 0) });
         using var storeTemp = new TempDirectory();

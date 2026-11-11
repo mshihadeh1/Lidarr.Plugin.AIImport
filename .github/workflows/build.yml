@@ -160,16 +160,14 @@ jobs:
         with:
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            Standalone Lidarr AI Import plugin with an authenticated in-Lidarr workspace for failed-import discovery, source-to-track review, explicit single-use approvals, strict hardlink-only execution, status, and fail-closed per-file reconciliation. No shell workflow, companion service, or separate Lidarr API credentials are required.
+            Standalone in-process Lidarr AI Import plugin. v2.0.0 adds optional unattended YOLO operation: blocked-download and periodic discovery, bounded MusicBrainz edition resolution, exact Lidarr library addition, internal approval, one strict-hardlink command per album, restart recovery, and fail-closed per-file reconciliation. No companion service or separate Lidarr credentials are required.
 
-            v1.1.5 uses the same reconciled manual-import evidence for discovery, human mapping creation, library addition, and approval. Stale Activity rows proven already imported are excluded consistently, while contradictory evidence and all import-safety or library-state rejections still fail closed.
-
-            This release requests strict JSON Schema output from OpenAI-compatible endpoints and optionally sends `enable_thinking=false` for compatible Qwen/llama.cpp servers. Model output remains subject to independent strict validation.
+            YOLO is standing authorization, not reduced validation. It requires explicit root-folder, quality-profile, and metadata-profile IDs. The LLM may select only candidates actually returned by the bounded MusicBrainz client. Ambiguous or incomplete candidate windows, source changes, ownership conflicts, existing destinations, cross-filesystem layouts, and uncertain execution state remain blocking.
 
             Minimum Lidarr Version: 3.1.2.4913
             Exact tested and supported Lidarr Version: 3.1.2.4913; newer versions are not supported by this release.
 
-            Configure the plugin's OpenAI-compatible endpoint in Lidarr and set Lidarr's Script Import path exactly as documented. Back up Lidarr and test one expendable album first. Never retry execute after an indeterminate response; use status and reconciliation.
+            Back up Lidarr and test one expendable album first. Strict hardlinks require download and library paths on the same filesystem. Never retry execution after an indeterminate response; allow reconciliation to establish the durable result first.
           files: |
             artifacts/*.zip
             artifacts/*.sha256

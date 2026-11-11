@@ -42,7 +42,7 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
     public override string Name => "AI Import";
     public override string Link => "https://github.com/mshihadeh1/Lidarr.Plugin.AIImport";
     public override ProviderMessage Message => new(
-        "Standalone approval-gated strict-hardlink import for Lidarr 3.1.2.4913. Review proposals before approving.",
+        "Strict-hardlink import for Lidarr 3.1.2.4913. YOLO mode is standing authorization for unattended verified imports.",
         ProviderMessageType.Info);
 
     public override ValidationResult Test()

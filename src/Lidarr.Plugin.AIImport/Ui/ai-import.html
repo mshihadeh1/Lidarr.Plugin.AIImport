@@ -417,7 +417,7 @@
       const proposed = analyses.filter(x => x.proposal && x.proposal.status === 'proposed').length;
       summary.textContent = `${analyses.length} analysis result(s): ${proposed} proposed, ${analyses.length - proposed} require manual review.`;
       if (response.yoloMode) results.appendChild(element('section',
-        'YOLO mode is on: missing tagged artists and albums were added to the library automatically, and the best verified mapping was promoted to a proposed mapping. Nothing is imported until you review the mapping, approve it, and type IMPORT.',
+        'YOLO mode is on: this discovery run may resolve missing releases through MusicBrainz, add them to Lidarr, approve complete verified mappings, execute strict hardlink imports, and reconcile them without manual confirmation. Review the diagnostics for the durable result of each import.',
         'notice yolo'));
       diagnostics.forEach(item => results.appendChild(element(
         'p',

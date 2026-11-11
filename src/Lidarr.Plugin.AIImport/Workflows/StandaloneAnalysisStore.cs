@@ -12,7 +12,8 @@ public sealed record StoredStandaloneAnalysis(
     bool HumanOverride = false,
     string? ParentAnalysisId = null,
     DateTimeOffset? ExpiresAt = null,
-    string? FolderPath = null);
+    string? FolderPath = null,
+    bool AutomatedOverride = false);
 
 public sealed class StandaloneAnalysisStore
 {

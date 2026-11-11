@@ -104,15 +104,22 @@ public sealed class DirectLidarrExecutionClient : ILidarrExecutionClient
             reviewed, plan.Files.Select(file => file.SourcePath).ToArray());
         foreach (var approved in plan.Files)
         {
+            var identificationOverride = plan.HumanOverride || plan.AutomatedOverride;
             if (!reviewedByPath.TryGetValue(approved.SourcePath, out var item))
                 throw new StaleApprovalException("Lidarr authoritative review omitted an approved source.");
             if (!MatchesApprovedReviewMaterial(item, approved))
                 throw new StaleApprovalException("Lidarr authoritative review changed approved source material.");
             if (item.Artist?.Id != plan.ArtistId || item.Album?.Id != plan.AlbumId || item.Release?.Id != plan.ReleaseId)
                 throw new StaleApprovalException("Lidarr authoritative review changed approved ownership.");
-            if (!HasOnlyPermittedRejections(item, plan.HumanOverride))
-                throw new StaleApprovalException("Lidarr authoritative review returned a non-identification safety rejection.");
-            if (!plan.HumanOverride && (item.Tracks.Count != 1 || item.Tracks[0].Id != approved.TrackId))
+            if (!HasOnlyPermittedRejections(item, identificationOverride))
+            {
+                var reasons = string.Join(" | ", item.Rejections.Select(x => x.Reason)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x.Replace('\r', ' ').Replace('\n', ' ')));
+                throw new StaleApprovalException(
+                    $"Lidarr authoritative review returned a non-identification safety rejection: {reasons}");
+            }
+            if (!identificationOverride && (item.Tracks.Count != 1 || item.Tracks[0].Id != approved.TrackId))
                 throw new StaleApprovalException("Lidarr authoritative review changed the approved automatic track mapping.");
         }
         if (HasOverlappingActiveManualImport(_commands.All(), plan.Files.Select(file => file.SourcePath).ToArray()))

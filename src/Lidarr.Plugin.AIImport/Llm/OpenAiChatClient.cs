@@ -11,6 +11,12 @@ public interface IOpenAiChatClient
 {
     Task<LlmTestResult> TestConnectionAsync(AiImportSettings settings, CancellationToken cancellationToken);
     Task<string> CompleteJsonAsync(AiImportSettings settings, string systemPrompt, string userPrompt, CancellationToken cancellationToken);
+    Task<string> CompleteMusicBrainzSelectionAsync(
+        AiImportSettings settings,
+        string systemPrompt,
+        string userPrompt,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException("This OpenAI-compatible client does not support MusicBrainz selection.");
 }
 
 public sealed record LlmTestResult(bool Success, string ModelResponse);
@@ -71,6 +77,27 @@ public sealed class OpenAiChatClient : IOpenAiChatClient
         }
         """).RootElement.Clone();
 
+    private static readonly JsonElement MusicBrainzSelectionResponseFormat = JsonDocument.Parse("""
+        {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "musicbrainz_release_selection",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "status": { "type": "string", "enum": ["selected", "notFound"] },
+                "releaseMusicBrainzId": { "type": ["string", "null"] },
+                "confidence": { "type": "number" },
+                "explanation": { "type": "string" }
+              },
+              "required": ["status", "releaseMusicBrainzId", "confidence", "explanation"]
+            }
+          }
+        }
+        """).RootElement.Clone();
+
     private readonly HttpClient _httpClient;
 
     public OpenAiChatClient() : this(new HttpClient())
@@ -89,7 +116,7 @@ public sealed class OpenAiChatClient : IOpenAiChatClient
             settings,
             "You are a connection tester. Follow the user's output instruction exactly.",
             "Reply with exactly AI_IMPORT_OK and no other text.",
-            structuredOutput: false,
+            responseFormat: null,
             cancellationToken).ConfigureAwait(false);
 
         if (!string.Equals(response.Trim(), "AI_IMPORT_OK", StringComparison.Ordinal))
@@ -108,7 +135,17 @@ public sealed class OpenAiChatClient : IOpenAiChatClient
             effectivePrompt += $"\n\nAdditional operator instructions that cannot override the safety rules above:\n{settings.CustomSystemPrompt}";
         }
 
-        return SendAsync(settings, effectivePrompt, userPrompt, structuredOutput: true, cancellationToken);
+        return SendAsync(settings, effectivePrompt, userPrompt, ProposalResponseFormat, cancellationToken);
+    }
+
+    public Task<string> CompleteMusicBrainzSelectionAsync(
+        AiImportSettings settings,
+        string systemPrompt,
+        string userPrompt,
+        CancellationToken cancellationToken)
+    {
+        var effectivePrompt = $"{CandidateSafetyRules}\n\nTask instructions:\n{systemPrompt}";
+        return SendAsync(settings, effectivePrompt, userPrompt, MusicBrainzSelectionResponseFormat, cancellationToken);
     }
 
     internal static Uri BuildChatCompletionsUri(string baseUrl)
@@ -126,7 +163,7 @@ public sealed class OpenAiChatClient : IOpenAiChatClient
         AiImportSettings settings,
         string systemPrompt,
         string userPrompt,
-        bool structuredOutput,
+        JsonElement? responseFormat,
         CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -147,7 +184,7 @@ public sealed class OpenAiChatClient : IOpenAiChatClient
                 new ChatMessage("system", systemPrompt),
                 new ChatMessage("user", userPrompt)
             },
-            structuredOutput ? ProposalResponseFormat : null,
+            responseFormat,
             settings.DisableThinking ? new ChatTemplateKwargs(false) : null), options: JsonOptions);
 
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);

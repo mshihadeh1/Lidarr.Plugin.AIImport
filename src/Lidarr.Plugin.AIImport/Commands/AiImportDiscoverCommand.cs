@@ -23,6 +23,7 @@ public sealed class AiImportDiscoverCommand : Command
     public override bool UpdateScheduledTask => false;
     public override bool RequiresDiskAccess => false;
     public override bool IsExclusive => false;
+    public override bool IsTypeExclusive => true;
     public override bool IsLongRunning => false;
 }
 
