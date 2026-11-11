@@ -78,46 +78,53 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
     {
         ArgumentNullException.ThrowIfNull(files);
         if (limit is < 1 or > 10) throw new ArgumentOutOfRangeException(nameof(limit));
-        var artist = Consensus(files.Select(x => x.Artist));
-        var album = Consensus(files.Select(x => x.Album));
+        var artist = Consensus(files.Select(x => x.Artist), stripSuffixes: false);
+        var album = Consensus(files.Select(x => x.Album), stripSuffixes: true);
         if (artist is null || album is null)
             return new MusicBrainzSearchResult([], "source tags do not contain one consensus artist and album title");
 
-        var queries = BuildSearchQueries(artist, album, files.Count);
-        var sawResults = false;
+        var stages = BuildSearchQueryStages(artist, album, files.Count);
         var sawTrackMismatch = false;
-        var sawOverflow = false;
-        foreach (var query in queries)
+        foreach (var stage in stages)
         {
-            var page = await SearchAllPagesAsync(query, files.Count, cancellationToken).ConfigureAwait(false);
-            sawResults |= page.TotalCount > 0;
-            sawTrackMismatch |= page.TotalCount > 0 && page.Candidates.Count == 0;
-            sawOverflow |= page.Overflow;
-            if (page.Overflow || page.Candidates.Count == 0) continue;
-            if (page.Candidates.Count > limit)
+            var stageCandidates = new Dictionary<Guid, SearchCandidate>();
+            foreach (var query in stage.Queries)
             {
-                return new MusicBrainzSearchResult([], $"{page.Candidates.Count} structurally plausible editions exceed the configured candidate limit of {limit}");
+                var page = await SearchAllPagesAsync(query, files.Count, cancellationToken).ConfigureAwait(false);
+                sawTrackMismatch |= page.TotalCount > 0 && page.Candidates.Count == 0;
+                if (page.Overflow)
+                    return new MusicBrainzSearchResult([], $"a MusicBrainz search exceeded the bounded {MaximumSearchResults}-result window");
+                foreach (var candidate in page.Candidates)
+                {
+                    if (!stageCandidates.TryGetValue(candidate.Id, out var existing) || candidate.Score > existing.Score)
+                        stageCandidates[candidate.Id] = candidate;
+                }
             }
+            if (stageCandidates.Count == 0) continue;
+            if (stageCandidates.Count > limit)
+                return new MusicBrainzSearchResult([], $"{stageCandidates.Count} structurally plausible editions exceed the configured candidate limit of {limit}");
 
-            var result = new List<MusicBrainzReleaseCandidate>(page.Candidates.Count);
-            foreach (var candidate in page.Candidates)
+            var orderedCandidates = stageCandidates.Values
+                .OrderByDescending(x => x.Score)
+                .ThenBy(x => x.Id)
+                .ToArray();
+            var result = new List<MusicBrainzReleaseCandidate>(orderedCandidates.Length);
+            foreach (var candidate in orderedCandidates)
             {
                 var release = await GetAsync(candidate.Id, cancellationToken).ConfigureAwait(false);
                 if (release is not null && release.Tracks.Count == files.Count)
                     result.Add(release with { SearchScore = candidate.Score });
             }
-            if (result.Count > 0)
-                return new MusicBrainzSearchResult(result, $"found {result.Count} complete edition candidate(s) with bounded query '{query.Label}'");
-            sawTrackMismatch = true;
+            if (result.Count != orderedCandidates.Length)
+            {
+                return new MusicBrainzSearchResult([], "one or more MusicBrainz candidates lacked complete authoritative release or track data");
+            }
+            return new MusicBrainzSearchResult(result, $"found {result.Count} complete edition candidate(s) with bounded stage '{stage.Label}'");
         }
 
-        var explanation = sawOverflow
-            ? $"one or more MusicBrainz searches exceeded the bounded {MaximumSearchResults}-result window, and no bounded query produced candidates"
-            : sawTrackMismatch
-                ? $"MusicBrainz returned releases, but none had exactly {files.Count} tracks"
-                : sawResults
-                    ? "MusicBrainz returned releases, but none had complete authoritative track data"
-                    : "MusicBrainz returned no releases for the exact or normalized artist/title queries";
+        var explanation = sawTrackMismatch
+            ? $"MusicBrainz returned releases, but none had exactly {files.Count} tracks"
+            : "MusicBrainz returned no releases for the exact or normalized artist/title queries";
         return new MusicBrainzSearchResult([], explanation);
     }
 
@@ -127,6 +134,7 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
         CancellationToken cancellationToken)
     {
         var candidates = new List<SearchCandidate>();
+        var rawIds = new HashSet<Guid>();
         int? expectedTotal = null;
         for (var offset = 0; ; offset += SearchWindow)
         {
@@ -138,19 +146,32 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
             if (!document.RootElement.TryGetProperty("count", out var countElement) ||
                 !countElement.TryGetInt32(out var totalCount) || totalCount < 0)
                 throw new InvalidDataException("MusicBrainz release search returned no valid result count.");
+            if (!document.RootElement.TryGetProperty("offset", out var offsetElement) ||
+                !offsetElement.TryGetInt32(out var returnedOffset) || returnedOffset != offset)
+                throw new InvalidDataException("MusicBrainz release search returned an unexpected result offset.");
             if (totalCount > MaximumSearchResults)
                 return new SearchPageResult(totalCount, true, []);
             if (expectedTotal is not null && expectedTotal != totalCount)
                 throw new InvalidDataException("MusicBrainz release search result count changed while paging.");
             expectedTotal = totalCount;
-            candidates.AddRange(releases.EnumerateArray()
-                .Where(item => SearchTrackCount(item) == trackCount)
-                .Select(item => new SearchCandidate(
-                    RequiredGuid(item, "id"),
-                    item.TryGetProperty("score", out var score) && score.TryGetInt32(out var value) ? value : 0))
-                .Where(x => x.Id != Guid.Empty));
+            var expectedPageCount = Math.Min(SearchWindow, totalCount - offset);
+            if (releases.GetArrayLength() != expectedPageCount)
+                throw new InvalidDataException("MusicBrainz release search returned an incomplete result page.");
+            foreach (var item in releases.EnumerateArray())
+            {
+                var id = RequiredGuid(item, "id");
+                if (id == Guid.Empty || !rawIds.Add(id))
+                    throw new InvalidDataException("MusicBrainz release search returned a missing or duplicate release identity.");
+                if (SearchTrackCount(item) != trackCount) continue;
+                candidates.Add(new SearchCandidate(
+                    id,
+                    item.TryGetProperty("score", out var score) && score.TryGetInt32(out var value) ? value : 0));
+            }
             if (offset + SearchWindow >= totalCount) break;
         }
+
+        if (rawIds.Count != (expectedTotal ?? 0))
+            throw new InvalidDataException("MusicBrainz release search did not return every declared result.");
 
         var unique = candidates
             .GroupBy(x => x.Id)
@@ -161,28 +182,33 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
         return new SearchPageResult(expectedTotal ?? 0, false, unique);
     }
 
-    private static IReadOnlyList<SearchQuery> BuildSearchQueries(string artist, string album, int trackCount)
+    private static IReadOnlyList<SearchQueryStage> BuildSearchQueryStages(string artist, string album, int trackCount)
     {
-        var artists = TextVariants(artist, stripSuffixes: false);
-        var albums = TextVariants(album, stripSuffixes: true);
-        var result = new List<SearchQuery>();
+        var artists = TextVariants(artist, stripSuffixes: false).Take(2).ToArray();
+        var albums = TextVariants(album, stripSuffixes: true).Take(3).ToArray();
+        var artistTitle = new List<SearchQuery>();
         foreach (var albumVariant in albums)
         {
             foreach (var artistVariant in artists)
             {
                 var query = $"(artist:\"{EscapeQuery(artistVariant)}\" OR artistname:\"{EscapeQuery(artistVariant)}\") AND " +
                             $"(release:\"{EscapeQuery(albumVariant)}\" OR alias:\"{EscapeQuery(albumVariant)}\") AND tracks:{trackCount.ToString(CultureInfo.InvariantCulture)}";
-                if (result.All(x => !string.Equals(x.Query, query, StringComparison.Ordinal)))
-                    result.Add(new SearchQuery($"artist+title+tracks:{result.Count + 1}", query));
+                if (artistTitle.All(x => !string.Equals(x.Query, query, StringComparison.Ordinal)))
+                    artistTitle.Add(new SearchQuery($"artist+title+tracks:{artistTitle.Count + 1}", query));
             }
         }
+        var titleOnly = new List<SearchQuery>();
         foreach (var albumVariant in albums)
         {
             var query = $"(release:\"{EscapeQuery(albumVariant)}\" OR alias:\"{EscapeQuery(albumVariant)}\") AND tracks:{trackCount.ToString(CultureInfo.InvariantCulture)}";
-            if (result.All(x => !string.Equals(x.Query, query, StringComparison.Ordinal)))
-                result.Add(new SearchQuery($"title+tracks:{result.Count + 1}", query));
+            if (titleOnly.All(x => !string.Equals(x.Query, query, StringComparison.Ordinal)))
+                titleOnly.Add(new SearchQuery($"title+tracks:{titleOnly.Count + 1}", query));
         }
-        return result.Take(8).ToArray();
+        return
+        [
+            new SearchQueryStage("artist+title+tracks", artistTitle),
+            new SearchQueryStage("title+tracks", titleOnly)
+        ];
     }
 
     private static IReadOnlyList<string> TextVariants(string value, bool stripSuffixes)
@@ -202,12 +228,13 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
 
     private static string StripMetadataSuffixes(string value)
     {
-        var result = value.Trim();
+        var result = value.Normalize(NormalizationForm.FormKC).Trim();
         while (true)
         {
             var match = Regex.Match(result, @"\s*(?:\[([^\[\]]+)\]|\(([^()]+)\))\s*$", RegexOptions.CultureInvariant);
             if (!match.Success) break;
-            var suffix = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
+            var suffix = (match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value)
+                .Normalize(NormalizationForm.FormKC);
             if (!Regex.IsMatch(suffix, @"(?:\b(?:19|20)\d{2}\b|\bWEB\b|\bFLAC\b|\bLOSSLESS\b|\b24\s*BIT\b|\b\d{2,3}\s*K(?:HZ)?\b|\b\d{2}\s*[/x]\s*\d{2,3}\b)",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) break;
             result = result[..match.Index].TrimEnd();
@@ -231,6 +258,7 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
     }
 
     private sealed record SearchQuery(string Label, string Query);
+    private sealed record SearchQueryStage(string Label, IReadOnlyList<SearchQuery> Queries);
     private sealed record SearchCandidate(Guid Id, int Score);
     private sealed record SearchPageResult(int TotalCount, bool Overflow, IReadOnlyList<SearchCandidate> Candidates);
 
@@ -374,17 +402,23 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
         return (Guid.Empty, string.Empty);
     }
 
-    private static string? Consensus(IEnumerable<string> values)
+    private static string? Consensus(IEnumerable<string> values, bool stripSuffixes)
     {
-        var grouped = values.Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x.Trim())
-            .GroupBy(x => x, StringComparer.OrdinalIgnoreCase)
+        var grouped = values
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => new
+            {
+                Original = x.Trim(),
+                Key = NormalizeSearchText(stripSuffixes ? StripMetadataSuffixes(x) : x)
+            })
+            .Where(x => x.Key.Length > 0)
+            .GroupBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(x => x.Count())
             .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         return grouped.Length == 0 || grouped.Length > 1 && grouped[0].Count() == grouped[1].Count()
             ? null
-            : grouped[0].Key;
+            : grouped[0].Select(x => x.Original).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).First();
     }
 
     private static string EscapeQuery(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);

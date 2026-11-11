@@ -9,6 +9,50 @@ namespace Lidarr.Plugin.AIImport.Tests;
 public sealed class MusicBrainzReleaseClientTests
 {
     [Test]
+    public async Task Enforces_the_candidate_limit_across_every_query_in_the_active_stage()
+    {
+        var exactId = Guid.NewGuid();
+        var normalizedId = Guid.NewGuid();
+        using var handler = new DelegateHandler(request =>
+        {
+            Assert.That(request.RequestUri!.AbsolutePath, Does.EndWith("/release/"));
+            var query = Uri.UnescapeDataString(request.RequestUri.Query);
+            if (query.Contains("release:\"LIMIT ROCKET (2026) [WEB FLAC 24／48]\"", StringComparison.Ordinal))
+                return SearchResponse(exactId, 2);
+            if (query.Contains("release:\"LIMIT ROCKET\"", StringComparison.Ordinal))
+                return SearchResponse(normalizedId, 2);
+            return JsonResponse("{\"count\":0,\"offset\":0,\"releases\":[]}");
+        });
+        using var http = new HttpClient(handler);
+        var client = new MusicBrainzReleaseClient(http, TimeProvider.System);
+
+        var result = await client.SearchAsync(
+            [Source("one", "One", 1, "LIMIT ROCKET (2026) [WEB FLAC 24／48]"), Source("two", "Two", 2, "LIMIT ROCKET (2026) [WEB FLAC 24／48]")],
+            1, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Candidates, Is.Empty);
+            Assert.That(result.Explanation, Does.Contain("exceed the configured candidate limit of 1"));
+        });
+    }
+
+    [Test]
+    public void Rejects_an_incomplete_successful_search_page()
+    {
+        var releaseId = Guid.NewGuid();
+        using var handler = new DelegateHandler(_ => JsonResponse($$$"""
+            {"count":2,"offset":0,"releases":[{"id":"{{{releaseId:D}}}","score":100,"media":[{"track-count":2}]}]}
+            """));
+        using var http = new HttpClient(handler);
+        var client = new MusicBrainzReleaseClient(http, TimeProvider.System);
+
+        Assert.That(async () => await client.SearchAsync(
+                [Source("one", "One", 1, "INCOMPLETE PAGE"), Source("two", "Two", 2, "INCOMPLETE PAGE")], 5, CancellationToken.None),
+            Throws.TypeOf<InvalidDataException>().With.Message.Contains("incomplete result page"));
+    }
+
+    [Test]
     public async Task Falls_back_to_a_normalized_release_title_with_track_count_before_giving_up()
     {
         var releaseId = Guid.NewGuid();
@@ -39,9 +83,9 @@ public sealed class MusicBrainzReleaseClientTests
             var query = Uri.UnescapeDataString(request.RequestUri.Query);
             queries.Add(query);
             if (!query.Contains("release:\"ROCKET\"", StringComparison.Ordinal))
-                return JsonResponse("{\"count\":0,\"releases\":[]}");
+                return JsonResponse("{\"count\":0,\"offset\":0,\"releases\":[]}");
             return JsonResponse($$$"""
-                {"count":1,"releases":[{"id":"{{{releaseId:D}}}","score":100,"media":[{"track-count":2}]}]}
+                {"count":1,"offset":0,"releases":[{"id":"{{{releaseId:D}}}","score":100,"media":[{"track-count":2}]}]}
                 """);
         });
         using var http = new HttpClient(handler);
@@ -111,12 +155,17 @@ public sealed class MusicBrainzReleaseClientTests
             Task.FromResult(respond(request));
     }
 
-    private static SourceFileCandidate Source(string id, string title, int track) =>
+    private static SourceFileCandidate Source(string id, string title, int track,
+        string album = "ROCKET (2026) [WEB FLAC 24／48]") =>
         new(id, $"{track:00} - {title}.flac", "BURNOUT SYNDROMES",
-            "ROCKET (2026) [WEB FLAC 24／48]", title, 1, [track], 123000, null, []);
+            album, title, 1, [track], 123000, null, []);
 
     private static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)
     {
         Content = new StringContent(json, Encoding.UTF8, "application/json")
     };
+
+    private static HttpResponseMessage SearchResponse(Guid releaseId, int tracks) => JsonResponse($$$"""
+        {"count":1,"offset":0,"releases":[{"id":"{{{releaseId:D}}}","score":100,"media":[{"track-count":{{{tracks}}}}]}]}
+        """);
 }
