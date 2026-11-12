@@ -20,32 +20,20 @@ public interface IYoloImportCoordinator
 public sealed class YoloImportCoordinator : IYoloImportCoordinator
 {
     private static readonly TimeSpan ApprovalLifetime = TimeSpan.FromMinutes(15);
-    private static readonly TimeSpan ReconciliationTimeout = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
 
     private readonly ApprovalService _approval;
     private readonly ImportExecutionService _execution;
     private readonly ImportReconciliationCoordinator _reconciliation;
-    private readonly TimeProvider _timeProvider;
+
 
     public YoloImportCoordinator(
         ApprovalService approval,
         ImportExecutionService execution,
         ImportReconciliationCoordinator reconciliation)
-        : this(approval, execution, reconciliation, TimeProvider.System)
-    {
-    }
-
-    internal YoloImportCoordinator(
-        ApprovalService approval,
-        ImportExecutionService execution,
-        ImportReconciliationCoordinator reconciliation,
-        TimeProvider timeProvider)
     {
         _approval = approval;
         _execution = execution;
         _reconciliation = reconciliation;
-        _timeProvider = timeProvider;
     }
 
     public YoloImportResult? ProcessNext(IReadOnlyList<AiImportAnalysisDto> analyses)
@@ -95,44 +83,35 @@ public sealed class YoloImportCoordinator : IYoloImportCoordinator
                 created.ApprovalId);
         }
 
-        var deadline = _timeProvider.GetUtcNow() + ReconciliationTimeout;
-        while (true)
+        try
         {
-            try
-            {
-                var reconciled = _reconciliation.ReconcileAsync(
-                        created.ApprovalId, string.Empty, CancellationToken.None, trustedInProcess: true)
-                    .GetAwaiter().GetResult();
-                if (reconciled.Status == ImportReconciliationStatus.Succeeded)
-                {
-                    return new YoloImportResult(
-                        analysis.AnalysisId,
-                        "complete",
-                        reconciled.Message,
-                        created.ApprovalId,
-                        started.CommandId);
-                }
-            }
-            catch (Exception exception)
+            var reconciled = _reconciliation.ReconcileAsync(
+                    created.ApprovalId, string.Empty, CancellationToken.None, trustedInProcess: true)
+                .GetAwaiter().GetResult();
+            if (reconciled.Status == ImportReconciliationStatus.Succeeded)
             {
                 return new YoloImportResult(
                     analysis.AnalysisId,
-                    "reconciliation-failed",
-                    $"YOLO reconciliation failed and execution must not be retried: {SafeMessage(exception)}",
+                    "complete",
+                    reconciled.Message,
                     created.ApprovalId,
                     started.CommandId);
             }
-
-            if (_timeProvider.GetUtcNow() >= deadline)
-            {
-                return new YoloImportResult(
-                    analysis.AnalysisId,
-                    "pending",
-                    "YOLO execution was submitted but did not reconcile within five minutes; reconcile the existing approval before retrying.",
-                    created.ApprovalId,
-                    started.CommandId);
-            }
-            Task.Delay(PollInterval, _timeProvider, CancellationToken.None).GetAwaiter().GetResult();
+            return new YoloImportResult(
+                analysis.AnalysisId,
+                "pending",
+                "YOLO execution was submitted and will be reconciled by the background recovery loop.",
+                created.ApprovalId,
+                started.CommandId);
+        }
+        catch (Exception exception)
+        {
+            return new YoloImportResult(
+                analysis.AnalysisId,
+                "reconciliation-failed",
+                $"YOLO reconciliation failed and execution must not be retried: {SafeMessage(exception)}",
+                created.ApprovalId,
+                started.CommandId);
         }
     }
 

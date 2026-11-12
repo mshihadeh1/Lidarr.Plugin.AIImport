@@ -93,6 +93,43 @@ public sealed class ImportReconciliationServiceTests
     }
 
     [Test]
+    public async Task Returns_pending_when_terminal_command_history_is_not_visible_yet()
+    {
+        var client = new FakeClient
+        {
+            Command = new LidarrCommandState(42, "ManualImport", "completed", "successful"),
+            History = []
+        };
+        var verifier = new FakeVerifier(new VerifiedTransferResult(AuthId, TransferResultOutcome.Linked, 1, 2));
+        var service = new ImportReconciliationService(client, verifier);
+
+        var result = await service.ReconcileAsync(
+            Plan(), [Binding()], 42, DateTimeOffset.UtcNow, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Status, Is.EqualTo(ImportReconciliationStatus.Pending));
+            Assert.That(result.Message, Does.Contain("history is still becoming visible"));
+            Assert.That(verifier.Destinations, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void Rejects_missing_terminal_command_history_after_grace_period()
+    {
+        var client = new FakeClient
+        {
+            Command = new LidarrCommandState(42, "ManualImport", "completed", "successful"),
+            History = []
+        };
+        var service = new ImportReconciliationService(
+            client, new FakeVerifier(new VerifiedTransferResult(AuthId, TransferResultOutcome.Linked, 1, 2)));
+
+        Assert.ThrowsAsync<ImportReconciliationException>(() => service.ReconcileAsync(
+            Plan(), [Binding()], 42, DateTimeOffset.UtcNow.Subtract(TimeSpan.FromMinutes(6)), CancellationToken.None));
+    }
+
+    [Test]
     public void Rejects_any_native_source_identity_mismatch()
     {
         var started = DateTimeOffset.Parse("2026-10-27T08:00:00Z");

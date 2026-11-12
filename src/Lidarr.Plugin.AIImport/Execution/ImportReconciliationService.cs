@@ -78,15 +78,19 @@ public interface IImportReconciliationService
 
 public sealed class ImportReconciliationService : IImportReconciliationService
 {
+    private static readonly TimeSpan EvidenceGracePeriod = TimeSpan.FromMinutes(5);
     private readonly ILidarrReconciliationClient _lidarr;
     private readonly ITransferResultVerifier _transfers;
+    private readonly TimeProvider _timeProvider;
 
     public ImportReconciliationService(
         ILidarrReconciliationClient lidarr,
-        ITransferResultVerifier transfers)
+        ITransferResultVerifier transfers,
+        TimeProvider? timeProvider = null)
     {
         _lidarr = lidarr;
         _transfers = transfers;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<ImportReconciliationResult> ReconcileAsync(
@@ -134,6 +138,10 @@ public sealed class ImportReconciliationService : IImportReconciliationService
                     item.Size == file.Size && item.IndexerFlags == file.IndexerFlags &&
                     JsonNode.DeepEquals(item.Quality, file.Quality))
                 .ToArray();
+            if (matches.Length == 0 && _timeProvider.GetUtcNow() - executionStartedAt < EvidenceGracePeriod)
+                return new ImportReconciliationResult(
+                    ImportReconciliationStatus.Pending, selectedHistory.Count,
+                    "Lidarr command is terminal, but import history is still becoming visible.");
             if (matches.Length != 1)
                 throw new ImportReconciliationException(
                     "Lidarr history did not contain exactly one matching import event for every approved source file.");

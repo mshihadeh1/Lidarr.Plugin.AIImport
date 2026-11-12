@@ -65,7 +65,7 @@ public sealed class MusicBrainzReleaseClient : IMusicBrainzReleaseClient
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
         if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
         {
-            _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("Lidarr.Plugin.AIImport", "2.0.4"));
+            _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("Lidarr.Plugin.AIImport", "2.0.5"));
             _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://github.com/mshihadeh1/Lidarr.Plugin.AIImport)"));
         }
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
