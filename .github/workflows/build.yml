@@ -160,9 +160,9 @@ jobs:
         with:
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            Standalone in-process Lidarr AI Import plugin. v2.0.3 automatically reuses an existing artist's root folder, quality profile, and metadata profile instead of rejecting an import when configured new-artist defaults differ. Imported track-file quality remains the exact FLAC, WAV, MP3, or other quality detected by Lidarr's audio scan and is preserved through approval, execution, and reconciliation. No companion service or separate Lidarr credentials are required.
+            Standalone in-process Lidarr AI Import plugin. v2.0.4 adds fresh continuous YOLO processing, durable import and cleanup history, exact audited hardlink rollback, and verified Lidarr activity cleanup. It also retries transient SQLite busy errors during read-only discovery scans with bounded backoff. No companion service or separate Lidarr credentials are required.
 
-            YOLO is standing authorization, not reduced validation. It requires explicit root-folder, quality-profile, and metadata-profile IDs. The LLM may select only candidates actually returned by the bounded MusicBrainz client. Ambiguous or incomplete candidate windows, source changes, ownership conflicts, existing destinations, cross-filesystem layouts, and uncertain execution state remain blocking.
+            YOLO is standing authorization, not reduced validation. It processes one mutation at a time from a fresh snapshot and stops on pending, failed, or indeterminate outcomes. The LLM may select only candidates actually returned by the bounded MusicBrainz client. Ambiguous or incomplete candidate windows, source changes, ownership conflicts, existing destinations, cross-filesystem layouts, and uncertain execution state remain blocking.
 
             Minimum Lidarr Version: 3.1.2.4913
             Exact tested and supported Lidarr Version: 3.1.2.4913; newer versions are not supported by this release.
