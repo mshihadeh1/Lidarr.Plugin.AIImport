@@ -1,4 +1,4 @@
-# Lidarr AI Import v2.0.3
+# Lidarr AI Import v2.0.4
 
 Standalone AI-assisted strict-hardlink imports for **Lidarr 3.1.2.4913**, with optional unattended MusicBrainz-backed YOLO mode.
 
@@ -46,7 +46,7 @@ The plugin checks these settings again before authorization and command submissi
 
 ### From a GitHub release
 
-Install `Lidarr.Plugin.AIImport-v2.0.3.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
+Install `Lidarr.Plugin.AIImport-v2.0.4.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
 ### Manual installation
 
@@ -68,7 +68,7 @@ Install `Lidarr.Plugin.AIImport-v2.0.3.net8.0.zip` through Lidarr's plugin suppo
    ```
 
 3. Restart Lidarr.
-4. Confirm **System → Plugins** reports `AI Import` version `2.0.3.0`.
+4. Confirm **System → Plugins** reports `AI Import` version `2.0.4.0`.
 5. Configure the exact Media Management settings listed above and restart Lidarr once more.
 
 ## Configure the LLM endpoint
@@ -130,6 +130,8 @@ v2.0.1 expands the bounded MusicBrainz resolver without weakening selection safe
 
 v2.0.3 reuses an existing artist's root folder and quality/metadata profiles. Configured YOLO destination settings are defaults for new artists only. Lidarr detects each source file's actual audio quality from its filename, codec, bitrate, and sample size; the plugin preserves that exact FLAC, WAV, MP3, or other `QualityModel` through approval, import, and reconciliation. It retains v2.0.2's nullable MusicBrainz metadata handling and v2.0.1's bounded resolver.
 
+v2.0.4 adds fresh continuous YOLO processing, durable import and cleanup history, exact hardlink rollback, verified Lidarr activity cleanup, and bounded retry of transient Lidarr SQLite busy errors during discovery.
+
 ### Downloads for artists not yet in Lidarr
 
 When qBittorrent sends a failed/blocked download to Lidarr and every source file has the same valid MusicBrainz artist, release-group, and release tags, discovery offers **Add verified artist and album**. Select an existing accessible Lidarr root folder, quality profile, and metadata profile, review the exact MusicBrainz IDs, and explicitly approve the library addition. The plugin calls Lidarr's own metadata, add, refresh, release-monitoring, and read-back services. It adds or reuses only the exact artist/album, selects only the tagged release, disables searches, and does not import files during this action. Run discovery again, review the resulting Lidarr-backed mapping, create an expiring approval, and execute normally. With **YOLO Mode** enabled, this add-to-library step is performed automatically during discovery and the resulting mapping is promoted to a proposed mapping for your final review.
@@ -157,7 +159,7 @@ If an execute response is lost or reports `Indeterminate`, do not execute again.
 
 ```bash
 git submodule update --init --recursive
-VERSION=2.0.3 ./scripts/build.sh
+VERSION=2.0.4 ./scripts/build.sh
 ```
 
 A dirty local verification build requires `ALLOW_DIRTY_BUILD=1` and intentionally does not claim a corresponding-source commit URL. Release packages must be produced from a clean tagged tree.

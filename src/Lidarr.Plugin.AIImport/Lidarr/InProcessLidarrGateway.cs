@@ -77,7 +77,7 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
     {
         _ = _runtimeInfo.Mode;
         _ = _config.Branch;
-        return _trackedDownloads.GetTrackedDownloads()
+        return LidarrDatabaseBusyRetry.Execute(() => _trackedDownloads.GetTrackedDownloads().ToArray())
             .Where(x => x.DownloadItem is not null)
             .Where(x =>
             {
@@ -112,7 +112,7 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
             throw new ArgumentException("A tracked download ID is required.", nameof(downloadId));
         }
 
-        var tracked = _trackedDownloads.Find(downloadId)
+        var tracked = LidarrDatabaseBusyRetry.Execute(() => _trackedDownloads.Find(downloadId))
             ?? throw new InvalidDataException("The tracked download no longer exists.");
         var item = tracked.ImportItem ?? tracked.DownloadItem
             ?? throw new InvalidDataException("The tracked download has no import item.");
@@ -123,7 +123,8 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
         }
 
         var artist = tracked.RemoteAlbum?.Artist;
-        var files = _manualImports.GetMediaFiles(path, downloadId, artist, FilterFilesType.None, false);
+        var files = LidarrDatabaseBusyRetry.Execute(() =>
+            _manualImports.GetMediaFiles(path, downloadId, artist, FilterFilesType.None, false).ToArray());
         var pending = new List<ManualImportItem>();
         var alreadyImported = 0;
         var indeterminate = 0;
@@ -193,8 +194,8 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
             throw new DirectoryNotFoundException("The scan folder no longer exists.");
         }
 
-        var result = _manualImports
-            .GetMediaFiles(folderPath, null, null, FilterFilesType.None, false)
+        var result = LidarrDatabaseBusyRetry.Execute(() =>
+                _manualImports.GetMediaFiles(folderPath, null, null, FilterFilesType.None, false).ToArray())
             // Lidarr includes existing library decisions when IncludeExisting is true.
             // An untracked-folder scan may consume only files physically returned from
             // the requested folder, never sibling downloads or library destinations.
@@ -341,7 +342,7 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
     {
         if (string.IsNullOrWhiteSpace(downloadId))
             throw new ArgumentException("A tracked download ID is required.", nameof(downloadId));
-        var tracked = _trackedDownloads.Find(downloadId)
+        var tracked = LidarrDatabaseBusyRetry.Execute(() => _trackedDownloads.Find(downloadId))
             ?? throw new InvalidDataException("The verified import is no longer present in Lidarr activity.");
         if (tracked.State is not (TrackedDownloadState.ImportBlocked or TrackedDownloadState.ImportFailed or TrackedDownloadState.Imported))
             throw new InvalidOperationException("Only a completed, blocked, or failed tracked import may be removed from activity.");
@@ -355,7 +356,7 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
         var scan = GetManualImportScan(downloadId);
         if (scan.Files.Count != 0 || scan.AlreadyImportedCount == 0 || scan.IndeterminateCount != 0)
             throw new InvalidOperationException("A fresh scan did not classify every source as an already-imported verified hardlink.");
-        var current = _trackedDownloads.Find(downloadId)
+        var current = LidarrDatabaseBusyRetry.Execute(() => _trackedDownloads.Find(downloadId))
             ?? throw new InvalidOperationException("The tracked download disappeared during cleanup verification.");
         var currentItem = current.ImportItem ?? current.DownloadItem
             ?? throw new InvalidOperationException("The tracked download lost its import item during cleanup verification.");
@@ -369,7 +370,7 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
             if (!_ignoredDownloads.IgnoreDownload(current))
                 throw new InvalidOperationException("Lidarr refused to persist the ignored-download marker.");
             _trackedDownloads.StopTracking(downloadId);
-            if (_trackedDownloads.Find(downloadId) is not null)
+            if (LidarrDatabaseBusyRetry.Execute(() => _trackedDownloads.Find(downloadId)) is not null)
                 throw new InvalidOperationException("Lidarr still tracks the download after cleanup.");
         }
         catch (Exception exception)
