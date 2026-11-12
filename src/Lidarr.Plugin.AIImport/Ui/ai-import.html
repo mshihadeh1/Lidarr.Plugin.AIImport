@@ -56,6 +56,17 @@
     return node;
   }
 
+  function safeHttpError(status, data) {
+    let detail = typeof data === 'string' ? data : JSON.stringify(data);
+    if (typeof detail === 'string' && /<\s*(?:!doctype|html)\b/i.test(detail)) {
+      const parsed = new DOMParser().parseFromString(detail, 'text/html');
+      detail = parsed.querySelector('h1')?.textContent || parsed.title || parsed.body?.textContent || '';
+    }
+    detail = String(detail || 'Request failed').replace(/\s+/g, ' ').trim();
+    if (detail.length > 500) detail = `${detail.slice(0, 500)}…`;
+    return `HTTP ${status}: ${detail}`;
+  }
+
   async function api(path, options = {}) {
     const headers = Object.assign({'X-Api-Key': apiKey}, options.headers || {});
     const response = await fetch(apiRoot + path, Object.assign({}, options, {headers, credentials: 'same-origin'}));
@@ -65,8 +76,7 @@
       try { data = JSON.parse(text); } catch { data = text; }
     }
     if (!response.ok) {
-      const detail = typeof data === 'string' ? data : JSON.stringify(data);
-      throw new Error(`HTTP ${response.status}: ${detail}`);
+      throw new Error(safeHttpError(response.status, data));
     }
     return data;
   }

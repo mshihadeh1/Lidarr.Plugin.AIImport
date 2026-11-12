@@ -46,6 +46,9 @@ public sealed class AiImportWorkspaceMapperTests
             Assert.That(html, Does.Contain("perform no file import until you rediscover"));
             Assert.That(html, Does.Contain("Type IMPORT to enable execution"));
             Assert.That(html, Does.Contain("function safeActionResult"));
+            Assert.That(html, Does.Contain("function safeHttpError"));
+            Assert.That(html, Does.Contain("new DOMParser().parseFromString"));
+            Assert.That(html, Does.Contain("detail.length > 500"));
             Assert.That(html, Does.Contain("commandStatus: value.commandStatus"));
             Assert.That(html, Does.Contain("executeConfirmation: 'IMPORT'"));
             Assert.That(html, Does.Contain("providerId"));
