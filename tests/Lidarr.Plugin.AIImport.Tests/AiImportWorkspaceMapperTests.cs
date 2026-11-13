@@ -49,6 +49,12 @@ public sealed class AiImportWorkspaceMapperTests
             Assert.That(html, Does.Contain("function safeHttpError"));
             Assert.That(html, Does.Contain("new DOMParser().parseFromString"));
             Assert.That(html, Does.Contain("detail.length > 500"));
+            Assert.That(html, Does.Contain("actionName = 'discover-start'"));
+            Assert.That(html, Does.Contain("actionName = 'discover-retry'"));
+            Assert.That(html, Does.Contain("action(actionName)"));
+            Assert.That(html, Does.Contain("action('discover-status')"));
+            Assert.That(html, Does.Contain("safe to close this tab"));
+            Assert.That(html, Does.Contain("await resumeDiscovery()"));
             Assert.That(html, Does.Contain("commandStatus: value.commandStatus"));
             Assert.That(html, Does.Contain("executeConfirmation: 'IMPORT'"));
             Assert.That(html, Does.Contain("providerId"));

@@ -418,28 +418,105 @@
     });
   }
 
+  let discoveryMonitor = 0;
+  let discoveryNeedsAcknowledgement = false;
+
+  function renderDiscoveryResult(response) {
+    const analyses = response.analyses || response || [];
+    const diagnostics = response.diagnostics || [];
+    const proposed = analyses.filter(x => x.proposal && x.proposal.status === 'proposed').length;
+    summary.className = 'summary';
+    summary.textContent = `${analyses.length} analysis result(s): ${proposed} proposed, ${analyses.length - proposed} require manual review.`;
+    results.replaceChildren();
+    if (response.yoloMode) results.appendChild(element('section',
+      'YOLO mode is on: this discovery run may resolve missing releases through MusicBrainz, add them to Lidarr, approve complete verified mappings, execute strict hardlink imports, and reconcile them without manual confirmation. Review the diagnostics for the durable result of each import.',
+      'notice yolo'));
+    diagnostics.forEach(item => results.appendChild(element(
+      'p',
+      `${item.message} Already imported: ${item.alreadyImportedCount}; indeterminate: ${item.indeterminateCount}.`,
+      item.indeterminateCount ? 'error' : 'muted')));
+    analyses.forEach(x => results.appendChild(renderAnalysis(x)));
+    if (!analyses.length && !diagnostics.length) results.appendChild(element('p', 'No Import Blocked/Failed queue items or untracked download folders were found.', 'muted'));
+  }
+
+  function renderDiscoveryJob(job) {
+    const state = String(job && job.state || 'none').toLowerCase();
+    summary.classList.remove('hidden');
+    if (state === 'queued' || state === 'running') {
+      discoveryNeedsAcknowledgement = false;
+      discoverButton.disabled = true;
+      discoverButton.textContent = 'Discover';
+      summary.className = 'summary';
+      summary.textContent = `Discovery is ${state} on the Lidarr server. It is safe to close this tab and come back from any device.`;
+      return true;
+    }
+    discoveryNeedsAcknowledgement = state === 'indeterminate';
+    discoverButton.disabled = false;
+    discoverButton.textContent = discoveryNeedsAcknowledgement ? 'Acknowledge and start new discovery' : 'Discover';
+    if (state === 'succeeded' && job.result) {
+      renderDiscoveryResult(job.result);
+    } else if (state === 'failed' || state === 'indeterminate') {
+      summary.textContent = `Server-side discovery ${state}: ${job.error || 'No verified completion was recorded.'}`;
+      summary.className = 'summary error';
+    } else {
+      summary.classList.add('hidden');
+    }
+    return false;
+  }
+
+  async function monitorDiscovery(jobId) {
+    const monitor = ++discoveryMonitor;
+    let failures = 0;
+    while (monitor === discoveryMonitor) {
+      await new Promise(resolve => setTimeout(resolve, Math.min(30000, 2000 * (2 ** failures))));
+      if (monitor !== discoveryMonitor) return;
+      try {
+        const job = await action('discover-status');
+        failures = 0;
+        if (job.jobId && job.jobId !== jobId) jobId = job.jobId;
+        if (!renderDiscoveryJob(job)) return;
+      } catch (error) {
+        summary.textContent = `Discovery status unavailable: ${error.message}. The server-side job may still be running.`;
+        summary.className = 'summary error';
+        failures = Math.min(failures + 1, 4);
+      }
+    }
+  }
+
   async function discover() {
+    ++discoveryMonitor;
     discoverButton.disabled = true;
-    summary.classList.remove('hidden'); summary.textContent = 'Discovering failed and blocked imports…';
+    summary.classList.remove('hidden'); summary.className = 'summary';
+    summary.textContent = 'Submitting discovery to the Lidarr server…';
     results.replaceChildren();
     try {
-      const response = await action('discover');
-      const analyses = response.analyses || response || [];
-      const diagnostics = response.diagnostics || [];
-      const proposed = analyses.filter(x => x.proposal && x.proposal.status === 'proposed').length;
-      summary.textContent = `${analyses.length} analysis result(s): ${proposed} proposed, ${analyses.length - proposed} require manual review.`;
-      if (response.yoloMode) results.appendChild(element('section',
-        'YOLO mode is on: this discovery run may resolve missing releases through MusicBrainz, add them to Lidarr, approve complete verified mappings, execute strict hardlink imports, and reconcile them without manual confirmation. Review the diagnostics for the durable result of each import.',
-        'notice yolo'));
-      diagnostics.forEach(item => results.appendChild(element(
-        'p',
-        `${item.message} Already imported: ${item.alreadyImportedCount}; indeterminate: ${item.indeterminateCount}.`,
-        item.indeterminateCount ? 'error' : 'muted')));
-      analyses.forEach(x => results.appendChild(renderAnalysis(x)));
-      if (!analyses.length && !diagnostics.length) results.appendChild(element('p', 'No Import Blocked/Failed queue items or untracked download folders were found.', 'muted'));
+      let actionName = 'discover-start';
+      if (discoveryNeedsAcknowledgement) {
+        const confirmed = window.confirm('The previous discovery ended indeterminate. Starting again may repeat a YOLO mutation whose outcome is unknown. Review durable import history first. Start a new discovery anyway?');
+        if (!confirmed) {
+          discoverButton.disabled = false;
+          await resumeDiscovery();
+          return;
+        }
+        actionName = 'discover-retry';
+      }
+      const job = await action(actionName);
+      if (renderDiscoveryJob(job)) void monitorDiscovery(job.jobId);
     } catch (error) {
-      summary.textContent = `Discovery failed: ${error.message}`; summary.className = 'summary error';
-    } finally { discoverButton.disabled = false; }
+      summary.textContent = `Discovery submission failed: ${error.message}`; summary.className = 'summary error';
+      discoverButton.disabled = false;
+    }
+  }
+
+  async function resumeDiscovery() {
+    try {
+      const job = await action('discover-status');
+      if (renderDiscoveryJob(job)) void monitorDiscovery(job.jobId);
+    } catch (error) {
+      summary.classList.remove('hidden');
+      summary.textContent = `Discovery status unavailable: ${error.message}`;
+      summary.className = 'summary error';
+    }
   }
 
   async function loadHistory() {
@@ -497,6 +574,7 @@
       discoverButton.addEventListener('click', discover);
       document.getElementById('refresh-history').addEventListener('click', loadHistory);
       await loadHistory();
+      await resumeDiscovery();
       if (window.opener && typeof window.opener.onCompleteOauth === 'function') {
         window.opener.onCompleteOauth('?aiImportOpened=true', () => {});
       }

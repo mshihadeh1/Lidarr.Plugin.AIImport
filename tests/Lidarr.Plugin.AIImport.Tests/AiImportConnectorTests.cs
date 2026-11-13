@@ -197,6 +197,29 @@ public sealed class AiImportConnectorTests
         });
     }
 
+    [Test]
+    public void RequestAction_starts_and_recovers_provider_scoped_server_side_discovery()
+    {
+        var jobs = new StubDiscoveryJobs();
+        var connector = new AiImportConnector(
+            new ThrowingClient("unused"), new StubWorkflow(Result()), new StubStandaloneWorkflow(),
+            new StubSettingsResolver(Settings()), jobs)
+        {
+            Definition = Definition(Settings())
+        };
+
+        var started = connector.RequestAction("discover-start", new Dictionary<string, string>());
+        var status = connector.RequestAction("discover-status", new Dictionary<string, string>());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(started, Is.SameAs(jobs.Job));
+            Assert.That(status, Is.SameAs(jobs.Job));
+            Assert.That(jobs.StartProviderIds, Is.EqualTo(new[] { 27 }));
+            Assert.That(jobs.StatusProviderIds, Is.EqualTo(new[] { 27 }));
+        });
+    }
+
     private static AiImportConnector Connector(IAiImportDiscoverWorkflow workflow, IAiImportSettingsResolver resolver) =>
         new(new ThrowingClient("unused"), workflow, resolver)
         {
@@ -264,6 +287,30 @@ public sealed class AiImportConnectorTests
                 throw new InvalidOperationException("Requested ID does not match saved provider.");
             }
             return settings;
+        }
+    }
+
+    private sealed class StubDiscoveryJobs : IAiImportDiscoveryJobService
+    {
+        public DiscoveryJobRecord Job { get; } = new(
+            "job-1", 27, 42, DiscoveryJobState.Queued,
+            DateTimeOffset.UtcNow, null, null, null, null);
+        public List<int> StartProviderIds { get; } = [];
+        public List<int> StatusProviderIds { get; } = [];
+        public DiscoveryJobRecord Start(int providerDefinitionId)
+        {
+            StartProviderIds.Add(providerDefinitionId);
+            return Job;
+        }
+        public DiscoveryJobRecord RestartAfterIndeterminate(int providerDefinitionId)
+        {
+            StartProviderIds.Add(providerDefinitionId);
+            return Job;
+        }
+        public DiscoveryJobRecord GetLatest(int providerDefinitionId)
+        {
+            StatusProviderIds.Add(providerDefinitionId);
+            return Job;
         }
     }
 

@@ -53,6 +53,32 @@ public sealed class AiImportDiscoverCommandTests
         });
     }
 
+    [Test]
+    public void Handler_persists_server_side_result_for_a_disconnected_browser()
+    {
+        using var temp = new TestTempDirectory();
+        var result = new AiImportDiscoverResult([]);
+        var path = Path.Combine(temp.Path, "discovery-jobs.json");
+        var store = new DiscoveryJobStore(path);
+        var job = store.CreateOrGetActive(27).Job;
+        var command = new AiImportDiscoverCommand { ProviderDefinitionId = 27, JobId = job.JobId };
+
+        new AiImportDiscoverCommandHandler(
+            new StubDiscoverWorkflow(result),
+            new StubResolver(new AiImportSettings { ApiBaseUrl = "https://example.test/v1", Model = "model" }),
+            store).Execute(command);
+
+        var saved = new DiscoveryJobStore(path).GetLatest(27);
+        Assert.Multiple(() =>
+        {
+            Assert.That(saved, Is.Not.Null);
+            Assert.That(saved!.State, Is.EqualTo(DiscoveryJobState.Succeeded));
+            Assert.That(saved.Result, Is.Not.Null);
+            Assert.That(saved.Result!.CandidateCount, Is.Zero);
+            Assert.That(saved.Result.Diagnostics, Is.Empty);
+        });
+    }
+
     private sealed class StubDiscoverWorkflow(AiImportDiscoverResult result) : IAiImportDiscoverWorkflow
     {
         public AiImportSettings? Settings { get; private set; }
