@@ -11,18 +11,18 @@ namespace Lidarr.Plugin.AIImport.Workflows;
 public sealed class YoloTrackedDownloadHandler : IHandle<TrackedDownloadRefreshedEvent>
 {
     private readonly INotificationRepository _notifications;
-    private readonly IManageCommandQueue _commands;
+    private readonly IAiImportDiscoveryJobService _discoveryJobs;
     private readonly Logger _logger;
     private readonly object _gate = new();
     private string? _lastQueuedSnapshot;
 
     public YoloTrackedDownloadHandler(
         INotificationRepository notifications,
-        IManageCommandQueue commands,
+        IAiImportDiscoveryJobService discoveryJobs,
         Logger logger)
     {
         _notifications = notifications;
-        _commands = commands;
+        _discoveryJobs = discoveryJobs;
         _logger = logger;
     }
 
@@ -67,14 +67,12 @@ public sealed class YoloTrackedDownloadHandler : IHandle<TrackedDownloadRefreshe
 
         try
         {
-            if (_commands.All().Any(command =>
-                    string.Equals(command.Name, new AiImportDiscoverCommand().Name, StringComparison.Ordinal) &&
-                    command.Status is CommandStatus.Queued or CommandStatus.Started))
-                return;
-            _commands.Push(new AiImportDiscoverCommand
+            var job = _discoveryJobs.Start(providers[0].Id);
+            if (job.State == DiscoveryJobState.Indeterminate)
             {
-                ProviderDefinitionId = providers[0].Id
-            }, CommandPriority.Low);
+                _logger.Warn("AI Import YOLO trigger remains blocked by indeterminate discovery job {0}", job.JobId);
+                return;
+            }
             _logger.Info("AI Import YOLO discovery queued for {0} blocked or failed download(s)", blocked.Length);
         }
         catch

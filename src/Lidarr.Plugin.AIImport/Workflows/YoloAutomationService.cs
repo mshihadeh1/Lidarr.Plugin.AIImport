@@ -17,7 +17,7 @@ public sealed class YoloAutomationService :
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromMinutes(1);
     private readonly INotificationRepository _notifications;
-    private readonly IManageCommandQueue _commands;
+    private readonly IAiImportDiscoveryJobService _discoveryJobs;
     private readonly ApprovalStore _approvals;
     private readonly ImportReconciliationCoordinator _reconciliation;
     private readonly YoloRuntimeStore _runtime;
@@ -28,14 +28,14 @@ public sealed class YoloAutomationService :
 
     public YoloAutomationService(
         INotificationRepository notifications,
-        IManageCommandQueue commands,
+        IAiImportDiscoveryJobService discoveryJobs,
         ApprovalStore approvals,
         ImportReconciliationCoordinator reconciliation,
         YoloRuntimeStore runtime,
         Logger logger)
     {
         _notifications = notifications;
-        _commands = commands;
+        _discoveryJobs = discoveryJobs;
         _approvals = approvals;
         _reconciliation = reconciliation;
         _runtime = runtime;
@@ -147,12 +147,12 @@ public sealed class YoloAutomationService :
             now - last < TimeSpan.FromMinutes(settings.YoloScanIntervalMinutes))
             return;
 
-        if (_commands.All().Any(command =>
-                string.Equals(command.Name, new AiImportDiscoverCommand().Name, StringComparison.Ordinal) &&
-                command.Status is CommandStatus.Queued or CommandStatus.Started))
+        var job = _discoveryJobs.Start(providers[0].Id);
+        if (job.State == DiscoveryJobState.Indeterminate)
+        {
+            _logger.Warn("AI Import periodic YOLO discovery remains blocked by indeterminate job {0}", job.JobId);
             return;
-
-        _commands.Push(new AiImportDiscoverCommand { ProviderDefinitionId = providers[0].Id }, CommandPriority.Low);
+        }
         // The command is already durable. Complete the timestamp write during graceful
         // shutdown so the next process does not immediately enqueue the same scan.
         _runtime.RecordPeriodicDiscoveryQueuedAsync(now, CancellationToken.None).GetAwaiter().GetResult();

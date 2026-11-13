@@ -13,6 +13,7 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
     private readonly IAiImportDiscoverWorkflow? _workflow;
     private readonly IStandaloneAiImportWorkflow? _standaloneWorkflow;
     private readonly IAiImportSettingsResolver? _settingsResolver;
+    private readonly IAiImportDiscoveryJobService? _discoveryJobs;
 
     public AiImportConnector(IOpenAiChatClient client)
     {
@@ -37,6 +38,17 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
         : this(client, workflow, settingsResolver)
     {
         _standaloneWorkflow = standaloneWorkflow;
+    }
+
+    public AiImportConnector(
+        IOpenAiChatClient client,
+        IAiImportDiscoverWorkflow workflow,
+        IStandaloneAiImportWorkflow standaloneWorkflow,
+        IAiImportSettingsResolver settingsResolver,
+        IAiImportDiscoveryJobService discoveryJobs)
+        : this(client, workflow, standaloneWorkflow, settingsResolver)
+    {
+        _discoveryJobs = discoveryJobs;
     }
 
     public override string Name => "AI Import";
@@ -68,7 +80,7 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
         if (action == "getOAuthToken")
             return new Dictionary<string, string>();
 
-        var allowed = action is "discover" or "add-library" or "manual-map" or "approve" or "execute" or "reconcile" or "status" or "history" or "rollback";
+        var allowed = action is "discover" or "discover-start" or "discover-retry" or "discover-status" or "add-library" or "manual-map" or "approve" or "execute" or "reconcile" or "status" or "history" or "rollback";
         if (!allowed)
         {
             throw new ArgumentException("Unknown AI Import action.", nameof(action));
@@ -77,6 +89,17 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
         if (_workflow is null || _settingsResolver is null)
         {
             throw new InvalidOperationException("Standalone discovery services are unavailable.");
+        }
+
+        if (action is "discover-start" or "discover-retry" or "discover-status")
+        {
+            if (_discoveryJobs is null)
+                throw new InvalidOperationException("Server-side discovery job services are unavailable.");
+            if (action == "discover-start") return _discoveryJobs.Start(Definition.Id);
+            if (action == "discover-retry") return _discoveryJobs.RestartAfterIndeterminate(Definition.Id);
+            var current = _discoveryJobs.GetLatest(Definition.Id);
+            if (current is not null) return current;
+            return new { state = "none" };
         }
 
         // Definition and query are request-controlled on the provider action route.
