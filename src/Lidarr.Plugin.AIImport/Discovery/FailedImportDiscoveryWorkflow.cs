@@ -88,25 +88,33 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         _yoloCoordinator = yoloCoordinator;
     }
 
-    public AiImportDiscoverResult Discover(AiImportSettings settings)
+    public AiImportDiscoverResult Discover(
+        AiImportSettings settings,
+        Action<AiImportJobProgress>? progress = null,
+        Func<bool>? stopRequested = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        ThrowIfStopRequested(stopRequested);
+        Report(progress, "starting", "Reading Lidarr import state", 5);
         DiscoveryGate.Wait();
         try
         {
             var allDiagnostics = new List<AiImportDiscoveryDiagnostic>();
             var mutations = 0;
+            var completedAlbums = 0;
             while (true)
             {
-                var pass = DiscoverCore(settings, mutations < 25);
+                ThrowIfStopRequested(stopRequested);
+                var pass = DiscoverCore(settings, mutations < 25, progress, completedAlbums, stopRequested);
                 allDiagnostics.AddRange(pass.Result.Diagnostics);
                 if (!pass.Mutated)
                     return pass.Result with { Diagnostics = allDiagnostics.ToArray(), YoloContinuation = false };
                 mutations++;
+                if (pass.CompletedAlbum) completedAlbums++;
                 if (mutations != 25) continue;
 
                 // Never expose the snapshot that preceded the final allowed mutation.
-                var fresh = DiscoverCore(settings, false).Result;
+                var fresh = DiscoverCore(settings, false, progress, completedAlbums, stopRequested).Result;
                 allDiagnostics.AddRange(fresh.Diagnostics);
                 allDiagnostics.Add(new AiImportDiscoveryDiagnostic(
                     "yolo-batch", 0, 0,
@@ -120,7 +128,12 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         }
     }
 
-    private (AiImportDiscoverResult Result, bool Mutated) DiscoverCore(AiImportSettings settings, bool allowMutation)
+    private (AiImportDiscoverResult Result, bool Mutated, bool CompletedAlbum) DiscoverCore(
+        AiImportSettings settings,
+        bool allowMutation,
+        Action<AiImportJobProgress>? progress,
+        int completedAlbums,
+        Func<bool>? stopRequested)
     {
         AiImportWorkflowDiagnostics.Info("discover", "started", detail: $"yolo={settings.YoloMode}");
         if (!string.Equals(_gateway.Version, CompatibleLidarrVersion, StringComparison.Ordinal))
@@ -128,6 +141,8 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             throw new InvalidOperationException($"Lidarr {CompatibleLidarrVersion} is required; running version is {_gateway.Version}.");
         }
 
+        Report(progress, "scanning-queue", "Scanning Lidarr's blocked and failed import queue", 10,
+            completedAlbums: completedAlbums);
         var failed = _gateway.GetTrackedDownloads()
             .Where(x => x.State is TrackedImportState.ImportBlocked or TrackedImportState.ImportFailed ||
                         settings.YoloMode && x.State == TrackedImportState.Imported)
@@ -140,14 +155,21 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         var analyses = new List<AiImportAnalysisDto>();
         var diagnostics = new List<AiImportDiscoveryDiagnostic>();
         var automationHalted = false;
-        foreach (var item in failed)
+        for (var failedIndex = 0; failedIndex < failed.Length; failedIndex++)
         {
+            ThrowIfStopRequested(stopRequested);
+            var item = failed[failedIndex];
+            var queuePercent = 12 + (failed.Length == 0 ? 0 : (failedIndex * 18 / failed.Length));
+            Report(progress, "scanning-queue", $"Inspecting {item.Title}", queuePercent,
+                item.Title, 5, completedAlbums: completedAlbums);
             try
             {
                 var scan = _gateway.GetManualImportScan(item.DownloadId);
+                Report(progress, "matching", $"Matching {item.Title} to Lidarr tracks", Math.Max(queuePercent, 30),
+                    item.Title, 20, 0, scan.Files.Count, completedAlbums);
                 var analysis = AnalyzeScan(
                     scan, item.DownloadId, null, AiImportSourceKinds.Queue, item.Title, item.AlbumId, settings,
-                    out var diagnostic);
+                    out var diagnostic, progress, Math.Max(queuePercent, 30), completedAlbums);
                 if (diagnostic is not null) diagnostics.Add(diagnostic);
                 if (analysis is not null)
                 {
@@ -157,15 +179,21 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                 {
                     if (settings.YoloMode && allowMutation)
                     {
+                        ThrowIfStopRequested(stopRequested);
                         if (diagnostic is not null) diagnostics.Remove(diagnostic);
                         try
                         {
+                            using var admission = AiImportMutationAdmission.Admit(stopRequested);
                             _gateway.RemoveVerifiedImportFromActivity(item.DownloadId);
                             diagnostics.Add(new AiImportDiscoveryDiagnostic(
                                 item.DownloadId, scan.AlreadyImportedCount, 0,
                                 "Removed the fully verified import from Lidarr activity without deleting download-client data; rediscovering from a fresh snapshot."));
                             _analysisStore?.Replace([]);
-                            return (new AiImportDiscoverResult([], diagnostics.ToArray(), true), true);
+                            return (new AiImportDiscoverResult([], diagnostics.ToArray(), true), true, false);
+                        }
+                        catch (AiImportStopRequestedException)
+                        {
+                            throw;
                         }
                         catch (Exception exception)
                         {
@@ -184,16 +212,19 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             }
         }
 
-        var folderAnalyses = ScanUntrackedFolders(settings, diagnostics);
+        var folderAnalyses = ScanUntrackedFolders(settings, diagnostics, progress, completedAlbums, stopRequested);
         analyses.AddRange(folderAnalyses);
 
+        Report(progress, "planning", "Checking verified albums for automatic processing", 60,
+            completedAlbums: completedAlbums);
+        ThrowIfStopRequested(stopRequested);
         var libraryOutcome = settings.YoloMode && allowMutation && !automationHalted
-            ? ApplyYoloMode(analyses, settings, diagnostics)
+            ? ApplyYoloMode(analyses, settings, diagnostics, stopRequested)
             : YoloMutationOutcome.None;
         if (libraryOutcome == YoloMutationOutcome.Mutated)
         {
             _analysisStore?.Replace([]);
-            return (new AiImportDiscoverResult([], diagnostics.ToArray(), true), true);
+            return (new AiImportDiscoverResult([], diagnostics.ToArray(), true), true, false);
         }
         if (libraryOutcome == YoloMutationOutcome.Halted) automationHalted = true;
 
@@ -206,9 +237,12 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         if (settings.YoloMode && allowMutation && !automationHalted && analyses.Count > 0 &&
             _analysisStore is not null && _yoloCoordinator is not null)
         {
-            var result = _yoloCoordinator.ProcessNext(analyses);
+            Report(progress, "planning-import", "Selecting the next verified album", 62,
+                completedAlbums: completedAlbums);
+            var result = _yoloCoordinator.ProcessNext(analyses, progress, completedAlbums, stopRequested);
             if (result is not null)
             {
+                var unresolvedMutation = result.Status is "pending" or "indeterminate" or "reconciliation-failed";
                 diagnostics.Add(new AiImportDiscoveryDiagnostic(
                     result.AnalysisId,
                     0,
@@ -217,23 +251,35 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                 if (string.Equals(result.Status, "complete", StringComparison.Ordinal))
                 {
                     _analysisStore.Replace([]);
-                    return (new AiImportDiscoverResult([], diagnostics.ToArray(), true), true);
+                    return (new AiImportDiscoverResult([], diagnostics.ToArray(), true), true, true);
+                }
+                if (unresolvedMutation)
+                {
+                    return (new AiImportDiscoverResult(
+                        analyses.ToArray(), diagnostics.ToArray(), settings.YoloMode,
+                        UnresolvedMutation: true), false, false);
                 }
             }
         }
+        Report(progress, "saving-results", "Saving AI Import results", 96,
+            completedAlbums: completedAlbums);
         AiImportWorkflowDiagnostics.Info(
             "discover", "completed", detail: $"queue={failed.Length};analyses={analyses.Count};diagnostics={diagnostics.Count}");
-        return (new AiImportDiscoverResult(analyses.ToArray(), diagnostics.ToArray(), settings.YoloMode), false);
+        return (new AiImportDiscoverResult(analyses.ToArray(), diagnostics.ToArray(), settings.YoloMode), false, false);
     }
 
     private List<AiImportAnalysisDto> ScanUntrackedFolders(
         AiImportSettings settings,
-        List<AiImportDiscoveryDiagnostic> diagnostics)
+        List<AiImportDiscoveryDiagnostic> diagnostics,
+        Action<AiImportJobProgress>? progress,
+        int completedAlbums,
+        Func<bool>? stopRequested)
     {
         var roots = AiImportSettingsValidator.SplitScanRoots(settings.ScanRoots);
         var analyses = new List<AiImportAnalysisDto>();
         foreach (var root in roots)
         {
+            ThrowIfStopRequested(stopRequested);
             if (!Path.IsPathFullyQualified(root))
             {
                 diagnostics.Add(new AiImportDiscoveryDiagnostic(root, 0, 0, "Skipped: untracked scan folder must be an absolute path."));
@@ -257,14 +303,22 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                     $"Scanned the {MaxUntrackedFoldersPerScan} newest album folders; {candidates.Length - capped.Length} older folders were skipped. Move finished albums out of the scan folder to import them."));
             }
 
-            foreach (var folder in capped)
+            for (var folderIndex = 0; folderIndex < capped.Length; folderIndex++)
             {
+                ThrowIfStopRequested(stopRequested);
+                var folder = capped[folderIndex];
+                var title = Path.GetFileName(folder.TrimEnd('/', '\\'));
+                var folderPercent = 34 + (capped.Length == 0 ? 0 : folderIndex * 16 / capped.Length);
+                Report(progress, "scanning-folders", $"Scanning {title}", folderPercent,
+                    title, 5, completedAlbums: completedAlbums);
                 try
                 {
                     var scan = _gateway.GetUntrackedManualImportScan(folder);
+                    Report(progress, "matching", $"Matching {title} to Lidarr tracks", Math.Max(folderPercent, 50),
+                        title, 20, 0, scan.Files.Count, completedAlbums);
                     var analysis = AnalyzeScan(
                         scan, string.Empty, folder, AiImportSourceKinds.Folder,
-                        Path.GetFileName(folder.TrimEnd('/', '\\')), null, settings, out var diagnostic);
+                        title, null, settings, out var diagnostic, progress, Math.Max(folderPercent, 50), completedAlbums);
                     if (diagnostic is not null) diagnostics.Add(diagnostic);
                     if (analysis is not null) analyses.Add(analysis);
                 }
@@ -353,7 +407,10 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         string title,
         int? queueAlbumId,
         AiImportSettings settings,
-        out AiImportDiscoveryDiagnostic? diagnostic)
+        out AiImportDiscoveryDiagnostic? diagnostic,
+        Action<AiImportJobProgress>? progress,
+        int overallPercent,
+        int completedAlbums)
     {
         var files = scan.Files;
         var sourceId = string.IsNullOrWhiteSpace(downloadId) ? folderPath ?? string.Empty : downloadId;
@@ -380,6 +437,8 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         if (deterministic.Status == DeterministicStatus.NeedsLlm && _llm is not null)
         {
             usedLlm = true;
+            Report(progress, "asking-ai", $"AI is ranking verified releases for {title}",
+                Math.Max(overallPercent, 55), title, 35, 0, files.Count, completedAlbums);
             try
             {
                 proposal = _llm.Match(settings, files, candidates, deterministic.RankedReleaseIds);
@@ -451,6 +510,8 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             }
         }
         var analysisId = ComputeAnalysisId(sourceId, sourceKind, queueAlbumId, files, candidates, proposal);
+        Report(progress, "validated", $"Validated mapping for {title}",
+            Math.Max(overallPercent, 58), title, 55, 0, files.Count, completedAlbums);
         AiImportWorkflowDiagnostics.Info(
             "discover", "analysis-created", analysisId,
             $"source={sourceKind};files={files.Count};candidates={candidates.Length};status={proposal.Status};llm={usedLlm}");
@@ -467,6 +528,25 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             folderPath,
             automatedOverride);
     }
+
+    private static void ThrowIfStopRequested(Func<bool>? stopRequested)
+    {
+        if (stopRequested?.Invoke() == true) throw new AiImportStopRequestedException();
+    }
+
+    private static void Report(
+        Action<AiImportJobProgress>? progress,
+        string stage,
+        string message,
+        int overallPercent,
+        string? album = null,
+        int? albumPercent = null,
+        int completedFiles = 0,
+        int totalFiles = 0,
+        int completedAlbums = 0) =>
+        progress?.Invoke(new AiImportJobProgress(
+            stage, message, overallPercent, album, albumPercent,
+            completedFiles, totalFiles, completedAlbums));
 
     internal static LibraryAdditionDto? GetLibraryAddition(IReadOnlyList<SourceFileCandidate> files)
     {
@@ -559,7 +639,8 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
     private YoloMutationOutcome ApplyYoloMode(
         List<AiImportAnalysisDto> analyses,
         AiImportSettings settings,
-        List<AiImportDiscoveryDiagnostic> diagnostics)
+        List<AiImportDiscoveryDiagnostic> diagnostics,
+        Func<bool>? stopRequested)
     {
         if (_yolo is null) return YoloMutationOutcome.None;
 
@@ -570,6 +651,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             var sourceId = string.IsNullOrWhiteSpace(analysis.DownloadId) ? analysis.FolderPath ?? string.Empty : analysis.DownloadId;
             try
             {
+                using var admission = AiImportMutationAdmission.Admit(stopRequested);
                 var created = _yolo.TryAddTaggedAlbum(addition, settings);
                 if (created.State != "complete")
                 {
@@ -581,6 +663,10 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                 diagnostics.Add(new AiImportDiscoveryDiagnostic(sourceId, 0, 0,
                     "YOLO mode: verified library addition completed; discarding the full snapshot and rediscovering."));
                 return YoloMutationOutcome.Mutated;
+            }
+            catch (AiImportStopRequestedException)
+            {
+                throw;
             }
             catch (Exception exception)
             {

@@ -148,9 +148,9 @@ public sealed class YoloAutomationService :
             return;
 
         var job = _discoveryJobs.Start(providers[0].Id);
-        if (job.State == DiscoveryJobState.Indeterminate)
+        if (job.State is DiscoveryJobState.Indeterminate or DiscoveryJobState.Stopped)
         {
-            _logger.Warn("AI Import periodic YOLO discovery remains blocked by indeterminate job {0}", job.JobId);
+            _logger.Warn("AI Import periodic YOLO discovery remains blocked by {0} job {1}", job.State, job.JobId);
             return;
         }
         // The command is already durable. Complete the timestamp write during graceful

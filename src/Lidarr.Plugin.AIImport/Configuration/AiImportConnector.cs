@@ -80,7 +80,7 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
         if (action == "getOAuthToken")
             return new Dictionary<string, string>();
 
-        var allowed = action is "discover" or "discover-start" or "discover-retry" or "discover-status" or "add-library" or "manual-map" or "approve" or "execute" or "reconcile" or "status" or "history" or "rollback";
+        var allowed = action is "discover" or "discover-start" or "discover-retry" or "discover-resume" or "discover-status" or "discover-stop" or "add-library" or "manual-map" or "approve" or "execute" or "reconcile" or "status" or "history" or "rollback";
         if (!allowed)
         {
             throw new ArgumentException("Unknown AI Import action.", nameof(action));
@@ -91,12 +91,14 @@ public sealed class AiImportConnector : NotificationBase<AiImportSettings>
             throw new InvalidOperationException("Standalone discovery services are unavailable.");
         }
 
-        if (action is "discover-start" or "discover-retry" or "discover-status")
+        if (action is "discover-start" or "discover-retry" or "discover-resume" or "discover-status" or "discover-stop")
         {
             if (_discoveryJobs is null)
                 throw new InvalidOperationException("Server-side discovery job services are unavailable.");
             if (action == "discover-start") return _discoveryJobs.Start(Definition.Id);
             if (action == "discover-retry") return _discoveryJobs.RestartAfterIndeterminate(Definition.Id);
+            if (action == "discover-resume") return _discoveryJobs.RestartAfterStopped(Definition.Id);
+            if (action == "discover-stop") return _discoveryJobs.RequestStop(Definition.Id);
             var current = _discoveryJobs.GetLatest(Definition.Id);
             if (current is not null) return current;
             return new { state = "none" };

@@ -210,13 +210,18 @@ public sealed class AiImportConnectorTests
 
         var started = connector.RequestAction("discover-start", new Dictionary<string, string>());
         var status = connector.RequestAction("discover-status", new Dictionary<string, string>());
+        var stopped = connector.RequestAction("discover-stop", new Dictionary<string, string>());
+        var resumed = connector.RequestAction("discover-resume", new Dictionary<string, string>());
 
         Assert.Multiple(() =>
         {
             Assert.That(started, Is.SameAs(jobs.Job));
             Assert.That(status, Is.SameAs(jobs.Job));
-            Assert.That(jobs.StartProviderIds, Is.EqualTo(new[] { 27 }));
+            Assert.That(stopped, Is.SameAs(jobs.Job));
+            Assert.That(resumed, Is.SameAs(jobs.Job));
+            Assert.That(jobs.StartProviderIds, Is.EqualTo(new[] { 27, 27 }));
             Assert.That(jobs.StatusProviderIds, Is.EqualTo(new[] { 27 }));
+            Assert.That(jobs.StopProviderIds, Is.EqualTo(new[] { 27 }));
         });
     }
 
@@ -266,7 +271,7 @@ public sealed class AiImportConnectorTests
         public int CallCount { get; private set; }
         public AiImportSettings? Settings { get; private set; }
 
-        public AiImportDiscoverResult Discover(AiImportSettings settings)
+        public AiImportDiscoverResult Discover(AiImportSettings settings, Action<AiImportJobProgress>? progress = null, Func<bool>? stopRequested = null)
         {
             CallCount++;
             Settings = settings;
@@ -297,6 +302,7 @@ public sealed class AiImportConnectorTests
             DateTimeOffset.UtcNow, null, null, null, null);
         public List<int> StartProviderIds { get; } = [];
         public List<int> StatusProviderIds { get; } = [];
+        public List<int> StopProviderIds { get; } = [];
         public DiscoveryJobRecord Start(int providerDefinitionId)
         {
             StartProviderIds.Add(providerDefinitionId);
@@ -307,9 +313,19 @@ public sealed class AiImportConnectorTests
             StartProviderIds.Add(providerDefinitionId);
             return Job;
         }
+        public DiscoveryJobRecord RestartAfterStopped(int providerDefinitionId)
+        {
+            StartProviderIds.Add(providerDefinitionId);
+            return Job;
+        }
         public DiscoveryJobRecord GetLatest(int providerDefinitionId)
         {
             StatusProviderIds.Add(providerDefinitionId);
+            return Job;
+        }
+        public DiscoveryJobRecord RequestStop(int providerDefinitionId)
+        {
+            StopProviderIds.Add(providerDefinitionId);
             return Job;
         }
     }
