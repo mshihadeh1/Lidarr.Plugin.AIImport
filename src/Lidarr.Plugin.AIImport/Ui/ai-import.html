@@ -5,33 +5,60 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>AI Import Workspace</title>
   <style>
-    :root{color-scheme:dark;--bg:#15171a;--panel:#202328;--panel2:#292d33;--text:#e5e7eb;--muted:#a7adb7;--line:#3a3f47;--blue:#5aa9e6;--green:#5ac18e;--amber:#e6b85a;--red:#ef6b73}
-    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
-    header{background:#0f1114;border-bottom:1px solid var(--line);padding:18px 24px;position:sticky;top:0;z-index:3} h1{font-size:22px;margin:0} header p{margin:4px 0 0;color:var(--muted)}
-    main{max-width:1200px;margin:0 auto;padding:24px}.toolbar,.summary,.notice{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;margin-bottom:16px}
-    .toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.grow{flex:1}.muted{color:var(--muted)}
-    button{border:0;border-radius:4px;padding:9px 14px;background:var(--blue);color:#07111b;font-weight:700;cursor:pointer}button.secondary{background:#59616d;color:white}button.danger{background:var(--red);color:#1c080a}button:disabled{opacity:.45;cursor:not-allowed}
-    .card{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:6px;margin:14px 0;padding:16px}.card.proposed{border-left-color:var(--green)}.card h2{font-size:17px;margin:0 0 6px;overflow-wrap:anywhere}
-    .badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:700;background:#4b515b}.badge.good{background:#235c43;color:#b9f6d7}.badge.warn{background:#624d21;color:#ffe4a5}
-.notice.yolo{border-left:4px solid #2e9e63}
-    table{width:100%;border-collapse:collapse;margin:12px 0;background:var(--panel2)}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-size:12px;text-transform:uppercase}.confidence{white-space:nowrap}
-    .review{background:#17191d;border:1px solid var(--line);padding:12px;border-radius:4px;margin-top:12px}.review label{display:block;margin:8px 0}.review input[type=text]{width:220px;max-width:100%;background:#0f1114;color:var(--text);border:1px solid var(--line);border-radius:4px;padding:8px}
-    pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#101215;border:1px solid var(--line);padding:10px;border-radius:4px}.error{color:#ffadb2}.success{color:#9de9bf}.hidden{display:none}.candidate-list{margin:8px 0;padding-left:20px}.statusline{margin-top:10px;font-weight:600}
-    @media(max-width:700px){main{padding:12px}header{padding:14px}th:nth-child(3),td:nth-child(3){display:none}}
+    :root{color-scheme:dark;--lidarr-green:#00a65b;--lidarr-green-bright:#19b86b;--page:#202020;--header:#161719;--surface:#27282d;--surface-raised:#303137;--surface-inset:#1b1c20;--text:#f0f1f2;--muted:#a9adb5;--border:#41434a;--blue:#5ca9e6;--amber:#f0ad4e;--red:#e66067;--shadow:0 2px 8px rgba(0,0,0,.28)}
+    *{box-sizing:border-box}html{background:var(--page)}body{margin:0;background:var(--page);color:var(--text);font:14px/1.5 "Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+    .app-header{background:var(--header);border-bottom:1px solid #0c0d0f;box-shadow:0 1px 5px rgba(0,0,0,.45);position:sticky;top:0;z-index:3}.header-inner{max-width:1240px;margin:0 auto;padding:15px 24px;display:flex;align-items:center;gap:14px}.app-mark{width:38px;height:38px;border-radius:7px;display:grid;place-items:center;background:var(--lidarr-green);color:#fff;font-size:20px;font-weight:800;box-shadow:inset 0 0 0 1px rgba(255,255,255,.15)}h1{font-size:21px;line-height:1.2;margin:0;font-weight:500}.app-header p{margin:3px 0 0;color:var(--muted);font-size:13px}
+    .workspace-shell{max-width:1240px;margin:0 auto;padding:24px}.toolbar,.summary,.notice,.progress-panel,.history-panel{background:var(--surface);border:1px solid var(--border);border-radius:4px;box-shadow:var(--shadow);padding:16px;margin-bottom:16px}.section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.section-title h2{font-size:18px;font-weight:500;margin:0}.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:3px solid var(--lidarr-green)}.grow{flex:1}.muted{color:var(--muted)}
+    .workspace-tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin:2px 0 18px;overflow-x:auto}.workspace-tab{border:0;border-bottom:3px solid transparent;border-radius:0;background:transparent;box-shadow:none;color:var(--muted);padding:12px 18px;white-space:nowrap}.workspace-tab:hover:not(:disabled){background:rgba(255,255,255,.04);color:var(--text)}.workspace-tab[aria-selected="true"]{border-bottom-color:var(--lidarr-green);background:rgba(0,166,91,.08);color:var(--text)}.tab-count{display:inline-grid;place-items:center;min-width:20px;height:20px;margin-left:7px;padding:0 6px;border-radius:10px;background:#484b52;color:#fff;font-size:11px}.workspace-tab[aria-selected="true"] .tab-count{background:var(--lidarr-green)}.tab-panel:focus{outline:none}.tab-panel:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.empty-state{padding:36px 20px;text-align:center;border:1px dashed var(--border);border-radius:4px;color:var(--muted)}
+    button{border:1px solid rgba(0,0,0,.25);border-radius:3px;padding:8px 13px;background:var(--lidarr-green);color:white;font-weight:600;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:background .15s,transform .05s}button:hover:not(:disabled){background:var(--lidarr-green-bright)}button:active:not(:disabled){transform:translateY(1px)}button.secondary{background:#4d5058;color:white}button.secondary:hover:not(:disabled){background:#5a5e67}button.danger{background:var(--red);color:white}button:disabled{opacity:.48;cursor:not-allowed}
+    .progress-panel{padding:18px}.progress-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}.progress-block{min-width:0}.progress-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:7px}.progress-heading strong{font-weight:600}.progress-heading span{color:var(--muted);font-variant-numeric:tabular-nums}.progress-track{height:12px;overflow:hidden;border:1px solid #121317;border-radius:6px;background:var(--surface-inset);box-shadow:inset 0 1px 3px rgba(0,0,0,.55)}.progress-fill{height:100%;width:0;background:linear-gradient(90deg,var(--lidarr-green),#31c77d);border-radius:5px;transition:width .35s ease}.progress-fill.running{position:relative;overflow:hidden}.progress-fill.running::after{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 25%,rgba(255,255,255,.25) 45%,transparent 65%);animation:activity 1.5s linear infinite}.progress-detail{min-height:21px;margin:8px 0 0;color:var(--muted);overflow-wrap:anywhere}.progress-detail strong{color:var(--text);font-weight:600}@keyframes activity{from{transform:translateX(-100%)}to{transform:translateX(100%)}}@media(prefers-reduced-motion:reduce){.progress-fill{transition:none}.progress-fill.running::after{animation:none}}
+    .card{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--amber);border-radius:4px;margin:14px 0;padding:17px;box-shadow:var(--shadow)}.card.proposed{border-left-color:var(--lidarr-green)}.card h2{font-size:17px;font-weight:500;margin:0 0 6px;overflow-wrap:anywhere}.badge{display:inline-block;padding:3px 8px;border-radius:3px;font-size:12px;font-weight:700;background:#4b4e56}.badge.good{background:#17663f;color:#d9ffeb}.badge.warn{background:#6a4f1f;color:#ffe4a5}
+    .notice{box-shadow:none;background:#25272b}.notice.safety{border-left:4px solid var(--blue)}.notice.yolo{border-left:4px solid var(--lidarr-green)}
+    table{width:100%;border-collapse:collapse;margin:12px 0;background:var(--surface-raised)}th,td{text-align:left;padding:9px;border-bottom:1px solid var(--border);vertical-align:top}th{color:var(--muted);font-size:11px;letter-spacing:.04em;text-transform:uppercase}.confidence{white-space:nowrap}.review{background:var(--surface-inset);border:1px solid var(--border);padding:13px;border-radius:3px;margin-top:12px}.review label{display:block;margin:8px 0}.review input[type=text],.history-panel input[type=text]{width:220px;max-width:100%;background:#17181b;color:var(--text);border:1px solid #555860;border-radius:3px;padding:8px}
+    pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#17181b;border:1px solid var(--border);padding:10px;border-radius:3px}.error{color:#ff9da3}.success{color:#8de6b4}.hidden{display:none!important}.candidate-list{margin:8px 0;padding-left:20px}.statusline{margin-top:10px;font-weight:600}.history-meta{display:flex;gap:8px 18px;flex-wrap:wrap;margin:9px 0;color:var(--muted)}details{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}summary{cursor:pointer;color:var(--blue);font-weight:600}.rollback-panel{margin-top:14px;padding:13px;border:1px solid rgba(230,96,103,.5);border-radius:3px;background:rgba(230,96,103,.07)}.rollback-panel p{margin-top:0}.path{font-family:Consolas,"Liberation Mono",monospace;font-size:12px;overflow-wrap:anywhere}
+    @media(max-width:760px){.workspace-shell{padding:12px}.header-inner{padding:12px 14px}.workspace-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible}.workspace-tab{padding:10px 4px;font-size:12px}.tab-count{margin-left:3px}.progress-grid{grid-template-columns:1fr}.toolbar button{flex:1 1 auto}.history-panel details{overflow-x:auto}}
   </style>
 </head>
 <body>
-<header><h1>AI Import Workspace</h1><p>Standalone, explicit-approval, hardlink-only imports inside Lidarr</p></header>
-<main>
-  <section class="notice"><strong>Safety:</strong> Discovery is read-only unless YOLO mode is enabled. In YOLO, each verified library addition, import, or stale-activity cleanup is processed one at a time with a fresh rediscovery. Manual execution is single-use and never falls back to copying. If an execution response is uncertain, do not retry—use Status and Reconcile.</section>
-  <section class="toolbar">
-    <button id="discover">Discover failed imports</button>
-    <button id="back" class="secondary">Back to Lidarr</button>
-    <span id="connection" class="grow muted">Connecting to Lidarr…</span>
+<header class="app-header"><div class="header-inner"><div class="app-mark" aria-hidden="true">AI</div><div><h1>AI Import</h1><p>Verified, hardlink-only album imports</p></div></div></header>
+<main class="workspace-shell">
+  <section class="notice safety"><strong>Safety:</strong> Discovery is read-only unless YOLO mode is enabled. In YOLO, each verified library addition, import, or stale-activity cleanup is processed one at a time with a fresh rediscovery. Manual execution is single-use and never falls back to copying. If an execution response is uncertain, do not retry—use Status and Reconcile.</section>
+  <nav class="workspace-tabs" role="tablist" aria-label="AI Import workspace">
+    <button id="ai-import-tab" class="workspace-tab" role="tab" aria-selected="true" aria-controls="ai-import-panel">AI Import</button>
+    <button id="manual-review-tab" class="workspace-tab" role="tab" aria-selected="false" aria-controls="manual-review-panel">Manual Review <span id="review-count" class="tab-count">0</span></button>
+    <button id="import-history-tab" class="workspace-tab" role="tab" aria-selected="false" aria-controls="import-history-panel">Import History <span id="history-count" class="tab-count">0</span></button>
+  </nav>
+  <section id="ai-import-panel" class="tab-panel" role="tabpanel" aria-labelledby="ai-import-tab" tabindex="0">
+    <section class="toolbar">
+      <button id="discover">Discover failed imports</button>
+      <button id="stop-import" class="danger" disabled>Stop after current operation</button>
+      <button id="back" class="secondary">Back to Lidarr</button>
+      <span id="connection" class="grow muted">Connecting to Lidarr…</span>
+    </section>
+    <section id="progress-panel" class="progress-panel hidden" aria-live="polite">
+    <div class="section-title"><h2>Current activity</h2><span id="progress-stage" class="badge">Queued</span></div>
+    <div class="progress-grid">
+      <div class="progress-block">
+        <div class="progress-heading"><strong>Stage progress</strong><span id="run-progress-label">0%</span></div>
+        <div id="run-progress" class="progress-track" role="progressbar" aria-label="Stage progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill"></div></div>
+        <p id="progress-message" class="progress-detail">Waiting for Lidarr…</p>
+      </div>
+      <div id="album-progress-block" class="progress-block hidden">
+        <div class="progress-heading"><strong>Album progress</strong><span id="album-progress-label">0%</span></div>
+        <div id="album-progress" class="progress-track" role="progressbar" aria-label="Album progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill"></div></div>
+        <p id="album-progress-message" class="progress-detail"></p>
+      </div>
+    </div>
+    </section>
+    <section id="summary" class="summary hidden"></section>
   </section>
-  <section id="summary" class="summary hidden"></section>
-  <section id="results"></section>
-  <section class="summary"><h2>Import history</h2><button id="refresh-history" class="secondary">Refresh history</button><div id="history" class="muted">Loading…</div></section>
+  <section id="manual-review-panel" class="tab-panel hidden" role="tabpanel" aria-labelledby="manual-review-tab" tabindex="0">
+    <section class="summary"><div class="section-title"><h2>Albums awaiting review</h2></div><span class="muted">Review AI matches, correct unresolved mappings, and explicitly approve any manual import.</span></section>
+    <section id="results"><div class="empty-state">Run AI Import to find albums that need review.</div></section>
+  </section>
+  <section id="import-history-panel" class="tab-panel hidden" role="tabpanel" aria-labelledby="import-history-tab" tabindex="0">
+    <section class="history-panel"><div class="section-title"><div><h2>AI Import history</h2><span class="muted">Every import made by this plug-in, with the exact Lidarr and filesystem evidence used for validation.</span></div><button id="refresh-history" class="secondary">Refresh</button></div><div id="history" class="muted">Loading…</div></section>
+  </section>
 </main>
 <script>
 'use strict';
@@ -40,13 +67,58 @@
   const basePath = location.pathname.toLowerCase().endsWith(pageName) ? location.pathname.slice(0, -pageName.length) : '';
   const connection = document.getElementById('connection');
   const discoverButton = document.getElementById('discover');
+  const stopButton = document.getElementById('stop-import');
   const summary = document.getElementById('summary');
   const results = document.getElementById('results');
   const history = document.getElementById('history');
+  const progressPanel = document.getElementById('progress-panel');
+  const progressStage = document.getElementById('progress-stage');
+  const runProgress = document.getElementById('run-progress');
+  const runProgressLabel = document.getElementById('run-progress-label');
+  const progressMessage = document.getElementById('progress-message');
+  const albumProgressBlock = document.getElementById('album-progress-block');
+  const albumProgress = document.getElementById('album-progress');
+  const albumProgressLabel = document.getElementById('album-progress-label');
+  const albumProgressMessage = document.getElementById('album-progress-message');
+  const reviewCount = document.getElementById('review-count');
+  const historyCount = document.getElementById('history-count');
   let apiRoot;
   let apiKey;
   let provider;
 
+  const tabs = {
+    ai: [document.getElementById('ai-import-tab'), document.getElementById('ai-import-panel')],
+    manual: [document.getElementById('manual-review-tab'), document.getElementById('manual-review-panel')],
+    history: [document.getElementById('import-history-tab'), document.getElementById('import-history-panel')]
+  };
+
+  function activateTab(name, updateHash = true) {
+    const selected = tabs[name] ? name : 'ai';
+    Object.entries(tabs).forEach(([key, [tab, panel]]) => {
+      const active = key === selected;
+      tab.setAttribute('aria-selected', String(active));
+      tab.tabIndex = active ? 0 : -1;
+      panel.classList.toggle('hidden', !active);
+    });
+    if (updateHash) window.history.replaceState(null, '', `#${selected}`);
+  }
+
+  Object.entries(tabs).forEach(([name, [tab]]) => {
+    tab.addEventListener('click', () => activateTab(name));
+    tab.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const names = Object.keys(tabs);
+      const next = event.key === 'Home'
+        ? names[0]
+        : event.key === 'End'
+          ? names[names.length - 1]
+          : names[(names.indexOf(name) + (event.key === 'ArrowRight' ? 1 : -1) + names.length) % names.length];
+      activateTab(next);
+      tabs[next][0].focus();
+    });
+  });
+  activateTab(location.hash.slice(1), false);
   document.getElementById('back').addEventListener('click', () => { location.href = basePath + '/'; });
 
   function element(tag, text, className) {
@@ -420,41 +492,114 @@
 
   let discoveryMonitor = 0;
   let discoveryNeedsAcknowledgement = false;
+  let discoveryNeedsResume = false;
 
   function renderDiscoveryResult(response) {
     const analyses = response.analyses || response || [];
     const diagnostics = response.diagnostics || [];
     const proposed = analyses.filter(x => x.proposal && x.proposal.status === 'proposed').length;
     summary.className = 'summary';
-    summary.textContent = `${analyses.length} analysis result(s): ${proposed} proposed, ${analyses.length - proposed} require manual review.`;
+    summary.replaceChildren(element('strong', `AI Import found ${analyses.length} album${analyses.length === 1 ? '' : 's'}.`));
+    summary.appendChild(document.createTextNode(` ${proposed} have complete verified mappings; ${analyses.length - proposed} need mapping or metadata review.`));
+    if (diagnostics.length) summary.appendChild(document.createTextNode(` ${diagnostics.length} diagnostic${diagnostics.length === 1 ? '' : 's'} require attention.`));
+    reviewCount.textContent = String(analyses.length + diagnostics.length);
+    if (analyses.length || diagnostics.length) {
+      const openReviews = element('button', 'Open Manual Review', 'secondary');
+      openReviews.style.marginLeft = '12px';
+      openReviews.addEventListener('click', () => activateTab('manual'));
+      summary.appendChild(openReviews);
+    }
     results.replaceChildren();
-    if (response.yoloMode) results.appendChild(element('section',
-      'YOLO mode is on: this discovery run may resolve missing releases through MusicBrainz, add them to Lidarr, approve complete verified mappings, execute strict hardlink imports, and reconcile them without manual confirmation. Review the diagnostics for the durable result of each import.',
-      'notice yolo'));
     diagnostics.forEach(item => results.appendChild(element(
       'p',
       `${item.message} Already imported: ${item.alreadyImportedCount}; indeterminate: ${item.indeterminateCount}.`,
       item.indeterminateCount ? 'error' : 'muted')));
     analyses.forEach(x => results.appendChild(renderAnalysis(x)));
-    if (!analyses.length && !diagnostics.length) results.appendChild(element('p', 'No Import Blocked/Failed queue items or untracked download folders were found.', 'muted'));
+    if (!analyses.length && !diagnostics.length) results.appendChild(element('div', 'Nothing needs manual review. AI Import did not find any blocked albums or untracked download folders.', 'empty-state'));
+  }
+
+  function clampPercent(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(0, Math.min(100, Math.round(number))) : 0;
+  }
+
+  function setProgressBar(track, label, value, active) {
+    const percent = clampPercent(value);
+    track.setAttribute('aria-valuenow', String(percent));
+    track.querySelector('.progress-fill').style.width = `${percent}%`;
+    track.querySelector('.progress-fill').classList.toggle('running', active && percent < 100);
+    label.textContent = `${percent}%`;
+  }
+
+  function stageLabel(value) {
+    return String(value || 'working').replace(/-/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
+  }
+
+  function renderJobProgress(job, state) {
+    if (!job || state === 'none') {
+      progressPanel.classList.add('hidden');
+      return;
+    }
+    const active = state === 'queued' || state === 'running';
+    const progress = job.progress || {
+      stage: state,
+      message: state === 'queued' ? 'Waiting for Lidarr to start the server-side job' : `Discovery ${state}`,
+      overallPercent: state === 'succeeded' ? 100 : 0,
+      currentAlbum: null,
+      albumPercent: 0,
+      completedFiles: 0,
+      totalFiles: 0,
+      completedAlbums: 0
+    };
+    progressPanel.classList.remove('hidden');
+    progressStage.textContent = stageLabel(progress.stage);
+    progressStage.className = state === 'succeeded' ? 'badge good' : state === 'failed' || state === 'indeterminate' ? 'badge warn' : 'badge';
+    setProgressBar(runProgress, runProgressLabel, progress.overallPercent, active);
+    const albumCount = Number(progress.completedAlbums || 0);
+    progressMessage.textContent = `${progress.message || 'Lidarr is working'}${albumCount ? ` · ${albumCount} album${albumCount === 1 ? '' : 's'} completed` : ''}`;
+
+    if (progress.currentAlbum) {
+      albumProgressBlock.classList.remove('hidden');
+      setProgressBar(albumProgress, albumProgressLabel, progress.albumPercent, active);
+      const completedFiles = Number(progress.completedFiles || 0);
+      const totalFiles = Number(progress.totalFiles || 0);
+      const fileText = totalFiles ? ` · ${completedFiles}/${totalFiles} files verified` : '';
+      albumProgressMessage.textContent = `${progress.currentAlbum}${fileText}`;
+    } else {
+      albumProgressBlock.classList.add('hidden');
+      setProgressBar(albumProgress, albumProgressLabel, 0, false);
+      albumProgressMessage.textContent = '';
+    }
   }
 
   function renderDiscoveryJob(job) {
     const state = String(job && job.state || 'none').toLowerCase();
+    renderJobProgress(job, state);
     summary.classList.remove('hidden');
     if (state === 'queued' || state === 'running') {
       discoveryNeedsAcknowledgement = false;
+      discoveryNeedsResume = false;
       discoverButton.disabled = true;
       discoverButton.textContent = 'Discover';
+      stopButton.disabled = Boolean(job.stopRequestedAt);
+      stopButton.textContent = job.stopRequestedAt ? 'Stop requested…' : 'Stop after current operation';
       summary.className = 'summary';
-      summary.textContent = `Discovery is ${state} on the Lidarr server. It is safe to close this tab and come back from any device.`;
+      summary.textContent = job.stopRequestedAt
+        ? 'Stop requested. Reconciliation or recovery for any submitted import will continue; AI Import will not start another mutation.'
+        : `Discovery is ${state} on the Lidarr server. It is safe to close this tab and come back from any device.`;
       return true;
     }
     discoveryNeedsAcknowledgement = state === 'indeterminate';
+    discoveryNeedsResume = state === 'stopped';
     discoverButton.disabled = false;
-    discoverButton.textContent = discoveryNeedsAcknowledgement ? 'Acknowledge and start new discovery' : 'Discover';
+    stopButton.disabled = true;
+    stopButton.textContent = 'Stop after current operation';
+    discoverButton.textContent = discoveryNeedsAcknowledgement ? 'Acknowledge and start new discovery' : discoveryNeedsResume ? 'Start AI Import again' : 'Discover';
     if (state === 'succeeded' && job.result) {
       renderDiscoveryResult(job.result);
+    } else if (state === 'stopped') {
+      summary.textContent = `${job.progress && job.progress.message || 'AI Import stopped safely before another operation.'} Periodic and tracked-download runs remain paused until you start AI Import again.`;
+      summary.className = 'summary';
     } else if (state === 'failed' || state === 'indeterminate') {
       summary.textContent = `Server-side discovery ${state}: ${job.error || 'No verified completion was recorded.'}`;
       summary.className = 'summary error';
@@ -500,11 +645,27 @@
         }
         actionName = 'discover-retry';
       }
+      if (discoveryNeedsResume) actionName = 'discover-resume';
       const job = await action(actionName);
       if (renderDiscoveryJob(job)) void monitorDiscovery(job.jobId);
     } catch (error) {
       summary.textContent = `Discovery submission failed: ${error.message}`; summary.className = 'summary error';
       discoverButton.disabled = false;
+    }
+  }
+
+  async function stopImport() {
+    stopButton.disabled = true;
+    stopButton.textContent = 'Requesting stop…';
+    try {
+      const job = await action('discover-stop');
+      if (renderDiscoveryJob(job)) void monitorDiscovery(job.jobId);
+    } catch (error) {
+      summary.classList.remove('hidden');
+      summary.textContent = `Stop request failed: ${error.message}`;
+      summary.className = 'summary error';
+      stopButton.disabled = false;
+      stopButton.textContent = 'Stop after current operation';
     }
   }
 
@@ -519,27 +680,65 @@
     }
   }
 
+  function formatDate(value) {
+    if (!value) return '—';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+  }
+
   async function loadHistory() {
     history.replaceChildren(element('p', 'Loading durable import history…', 'muted'));
     try {
-      const records = await action('history');
+      const records = (await action('history') || []).slice()
+        .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+      historyCount.textContent = String(records.length);
       history.replaceChildren();
-      (records || []).forEach(record => {
-        const card = element('article', null, 'card');
-        card.appendChild(element('h2', `Album ${record.albumId} · release ${record.releaseId}`));
-        card.appendChild(element('p', `State: ${record.state} · source: ${record.downloadId || 'untracked folder'} · command: ${record.commandId || 'none'}`));
-        card.appendChild(element('p', record.outcome || 'No outcome recorded.', 'muted'));
+      records.forEach(record => {
+        const files = record.files || [];
+        const succeeded = String(record.state).toLowerCase() === 'succeeded';
+        const rolledBack = Boolean(record.rolledBackAt);
+        const card = element('article', null, `card${succeeded && !rolledBack ? ' proposed' : ''}`);
+        const heading = element('div', null, 'section-title');
+        heading.appendChild(element('h2', `Album ${record.albumId} · release ${record.releaseId}`));
+        heading.appendChild(element('span', rolledBack ? 'Rolled back' : succeeded ? 'Verified import' : record.state, rolledBack ? 'badge warn' : succeeded ? 'badge good' : 'badge warn'));
+        card.appendChild(heading);
+        const meta = element('div', null, 'history-meta');
+        const dateLabel = succeeded ? 'Imported' : rolledBack ? 'Completed' : 'Started';
+        meta.appendChild(element('span', `${dateLabel} ${formatDate(record.completedAt || record.createdAt)}`));
+        meta.appendChild(element('span', `Source: ${record.downloadId || 'untracked folder'}`));
+        meta.appendChild(element('span', `Lidarr command: ${record.commandId || 'none'}`));
+        card.appendChild(meta);
+        card.appendChild(element('p', record.outcome || 'No outcome recorded.', succeeded ? 'success' : 'muted'));
+        if (rolledBack) card.appendChild(element('p', `Rolled back ${formatDate(record.rolledBackAt)}. The imported hardlinks and their Lidarr track-file records were removed; source files were retained.`, 'muted'));
         if (record.activityCleanupStartedAt) {
           const cleanupState = record.activityCleanupCompletedAt ? 'verified complete' : 'indeterminate/incomplete';
           card.appendChild(element('p', `Activity cleanup: ${cleanupState} · ${record.activityCleanupOutcome || 'No outcome recorded.'}`, record.activityCleanupCompletedAt ? 'success' : 'error'));
         }
-        const list = element('ul');
-        (record.files || []).forEach(file => list.appendChild(element('li', `${file.sourcePath} → ${file.importedPath} (track ${file.trackId}, history ${file.historyId})`)));
-        card.appendChild(list);
+
+        const evidence = element('details');
+        evidence.appendChild(element('summary', files.length ? `${files.length} verified imported track file${files.length === 1 ? '' : 's'}` : 'No exact per-file evidence'));
+        if (files.length) {
+          const table = element('table');
+          const head = element('thead'); const row = element('tr');
+          ['Source retained', 'Lidarr hardlink', 'Evidence'].forEach(label => row.appendChild(element('th', label)));
+          head.appendChild(row); table.appendChild(head);
+          const body = element('tbody');
+          files.forEach(file => {
+            const item = element('tr');
+            item.appendChild(element('td', file.sourcePath, 'path'));
+            item.appendChild(element('td', file.importedPath, 'path'));
+            item.appendChild(element('td', `Track ${file.trackId} · file ${file.trackFileId} · history ${file.historyId}`));
+            body.appendChild(item);
+          });
+          table.appendChild(body); evidence.appendChild(table);
+        }
+        card.appendChild(evidence);
         if (record.legacy) card.appendChild(element('p', 'Legacy record: exact destination evidence is unavailable, so rollback is disabled.', 'muted'));
         if (record.canRollback) {
+          const rollbackPanel = element('div', null, 'rollback-panel');
+          rollbackPanel.appendChild(element('p', 'Rollback removes the exact imported hardlinks and their matching track-file records from Lidarr. Source files are always retained. Metadata such as the artist and album remains in Lidarr.'));
           const confirmation = document.createElement('input'); confirmation.type = 'text'; confirmation.placeholder = 'Type ROLLBACK'; confirmation.autocomplete = 'off';
-          const rollback = element('button', 'Rollback imported hardlinks', 'danger'); rollback.disabled = true;
+          const rollback = element('button', 'Remove from Lidarr and delete hardlinks', 'danger'); rollback.disabled = true;
           const output = element('div', '', 'statusline');
           confirmation.addEventListener('input', () => { rollback.disabled = confirmation.value !== 'ROLLBACK'; });
           rollback.addEventListener('click', async () => {
@@ -547,13 +746,16 @@
             try {
               const result = await action('rollback', {approvalId: record.approvalId, rollbackConfirmation: 'ROLLBACK'});
               setCardStatus(output, result.message, 'success'); await loadHistory();
-            } catch (error) { setCardStatus(output, `Rollback stopped: ${error.message}`, 'error'); }
+            } catch (error) {
+              setCardStatus(output, `Rollback response failed. Its outcome may be indeterminate; do not retry. Review Import History and reconcile manually. ${error.message}`, 'error');
+            }
           });
-          card.appendChild(confirmation); card.appendChild(document.createTextNode(' ')); card.appendChild(rollback); card.appendChild(output);
+          rollbackPanel.appendChild(confirmation); rollbackPanel.appendChild(document.createTextNode(' ')); rollbackPanel.appendChild(rollback); rollbackPanel.appendChild(output);
+          card.appendChild(rollbackPanel);
         }
         history.appendChild(card);
       });
-      if (!(records || []).length) history.appendChild(element('p', 'No completed import records.', 'muted'));
+      if (!records.length) history.appendChild(element('div', 'No AI Import records yet. Completed and rolled-back imports will appear here.', 'empty-state'));
     } catch (error) { history.replaceChildren(element('p', `History unavailable: ${error.message}`, 'error')); }
   }
 
@@ -572,6 +774,7 @@
       if (!provider) throw new Error(`Saved AI Import provider ${providerId} was not found.`);
       connection.textContent = `Connected to ${init.instanceName || 'Lidarr'} ${init.version || ''}`;
       discoverButton.addEventListener('click', discover);
+      stopButton.addEventListener('click', stopImport);
       document.getElementById('refresh-history').addEventListener('click', loadHistory);
       await loadHistory();
       await resumeDiscovery();

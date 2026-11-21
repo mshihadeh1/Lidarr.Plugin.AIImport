@@ -10,7 +10,9 @@ public enum AiImportDiscoverStatus
     Pending,
     Running,
     Succeeded,
-    Failed
+    Indeterminate,
+    Failed,
+    Stopped
 }
 
 // Backend command queued by the control API; discovery remains in the standalone workflow.
@@ -57,12 +59,34 @@ public sealed class AiImportDiscoverCommandHandler : IExecute<AiImportDiscoverCo
         message.Status = AiImportDiscoverStatus.Running;
         message.Result = null;
         if (!string.IsNullOrWhiteSpace(message.JobId)) _jobs?.MarkRunning(message.JobId);
+        var stopRequested = new Func<bool>(() =>
+            !string.IsNullOrWhiteSpace(message.JobId) && _jobs?.IsStopRequested(message.JobId) == true);
         try
         {
+            if (stopRequested()) throw new AiImportStopRequestedException();
             var settings = _settingsResolver.ResolveEnabled(message.ProviderDefinitionId);
-            message.Result = _workflow.Discover(settings);
+            message.Result = _workflow.Discover(settings, progress =>
+            {
+                if (!string.IsNullOrWhiteSpace(message.JobId)) _jobs?.UpdateProgress(message.JobId, progress);
+            }, stopRequested);
+            if (message.Result?.UnresolvedMutation == true)
+            {
+                message.Status = AiImportDiscoverStatus.Indeterminate;
+                if (!string.IsNullOrWhiteSpace(message.JobId))
+                    _jobs?.MarkIndeterminate(message.JobId,
+                        "A Lidarr import crossed the submission boundary, but reconciliation is not yet verified. Automatic retry is forbidden.");
+                return;
+            }
+            if (stopRequested()) throw new AiImportStopRequestedException();
             message.Status = AiImportDiscoverStatus.Succeeded;
-            if (!string.IsNullOrWhiteSpace(message.JobId)) _jobs?.Complete(message.JobId, message.Result);
+            if (!string.IsNullOrWhiteSpace(message.JobId)) _jobs?.Complete(message.JobId, message.Result!);
+        }
+        catch (AiImportStopRequestedException)
+        {
+            message.Status = AiImportDiscoverStatus.Stopped;
+            if (!string.IsNullOrWhiteSpace(message.JobId))
+                _jobs?.MarkStopped(message.JobId,
+                    "Stopped safely before starting another AI Import operation.");
         }
         catch (Exception exception)
         {

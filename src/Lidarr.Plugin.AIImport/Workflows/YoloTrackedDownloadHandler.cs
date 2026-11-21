@@ -68,9 +68,9 @@ public sealed class YoloTrackedDownloadHandler : IHandle<TrackedDownloadRefreshe
         try
         {
             var job = _discoveryJobs.Start(providers[0].Id);
-            if (job.State == DiscoveryJobState.Indeterminate)
+            if (job.State is DiscoveryJobState.Indeterminate or DiscoveryJobState.Stopped)
             {
-                _logger.Warn("AI Import YOLO trigger remains blocked by indeterminate discovery job {0}", job.JobId);
+                _logger.Warn("AI Import YOLO trigger remains blocked by {0} discovery job {1}", job.State, job.JobId);
                 return;
             }
             _logger.Info("AI Import YOLO discovery queued for {0} blocked or failed download(s)", blocked.Length);

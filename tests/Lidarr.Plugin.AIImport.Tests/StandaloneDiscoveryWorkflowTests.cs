@@ -168,6 +168,7 @@ public sealed class StandaloneDiscoveryWorkflowTests
             Assert.That(gateway.TrackedDownloadCalls, Is.EqualTo(1));
             Assert.That(coordinator.Calls, Is.EqualTo(1));
             Assert.That(result.Analyses, Has.Count.EqualTo(2));
+            Assert.That(result.UnresolvedMutation, Is.True);
             Assert.That(result.Diagnostics.Single(x => x.Message.Contains("still running", StringComparison.Ordinal)).IndeterminateCount, Is.Zero);
         });
     }
@@ -341,6 +342,55 @@ public sealed class StandaloneDiscoveryWorkflowTests
             new DeterministicMatcher(), null).Discover(settings);
 
         Assert.That(result.Analyses, Is.Empty);
+    }
+
+    [Test]
+    public void Discovery_honors_a_stop_between_untracked_album_folders()
+    {
+        using var temp = new TempDirectory();
+        var first = Path.Combine(temp.Path, "Artist", "First");
+        var second = Path.Combine(temp.Path, "Artist", "Second");
+        Directory.CreateDirectory(first);
+        Directory.CreateDirectory(second);
+        File.WriteAllText(Path.Combine(first, "01.flac"), string.Empty);
+        File.WriteAllText(Path.Combine(second, "01.flac"), string.Empty);
+        var gateway = new FakeGateway(
+            [],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>>(),
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>>(),
+            untrackedScans: new Dictionary<string, ManualImportScanResult>
+            {
+                [first] = new([], 0, 0),
+                [second] = new([], 0, 0)
+            });
+        var settings = Settings();
+        settings.ScanRoots = temp.Path;
+
+        Assert.That(() => new FailedImportDiscoveryWorkflow(gateway, new DeterministicMatcher(), null)
+                .Discover(settings, stopRequested: () => gateway.UntrackedScanFolders.Count >= 1),
+            Throws.TypeOf<AiImportStopRequestedException>());
+        Assert.That(gateway.UntrackedScanFolders, Has.Count.EqualTo(1));
+    }
+
+    [Test]
+    public void Activity_cleanup_does_not_increment_completed_album_progress()
+    {
+        var item = new QueueCandidate(1, 10, "already imported", TrackedImportState.Imported, "done");
+        var gateway = new FakeGateway(
+            [item],
+            new Dictionary<string, IReadOnlyList<SourceFileCandidate>> { ["done"] = [] },
+            new Dictionary<int, IReadOnlyList<ReleaseCandidate>>(),
+            scanCounts: new Dictionary<string, (int Imported, int Indeterminate)> { ["done"] = (1, 0) },
+            queueSnapshots: new IReadOnlyList<QueueCandidate>[] { [item], [] });
+        var settings = Settings();
+        settings.YoloMode = true;
+        var progress = new List<AiImportJobProgress>();
+
+        new FailedImportDiscoveryWorkflow(gateway, new DeterministicMatcher(), null)
+            .Discover(settings, progress.Add);
+
+        Assert.That(gateway.RemovedActivityDownloadIds, Is.EqualTo(new[] { "done" }));
+        Assert.That(progress.Select(itemProgress => itemProgress.CompletedAlbums), Has.All.EqualTo(0));
     }
 
     [Test]
@@ -572,7 +622,11 @@ public sealed class StandaloneDiscoveryWorkflowTests
     private sealed class FakeYoloCoordinator(YoloImportResult result) : IYoloImportCoordinator
     {
         public int Calls { get; private set; }
-        public YoloImportResult? ProcessNext(IReadOnlyList<AiImportAnalysisDto> analyses)
+        public YoloImportResult? ProcessNext(
+            IReadOnlyList<AiImportAnalysisDto> analyses,
+            Action<AiImportJobProgress>? progress = null,
+            int completedAlbums = 0,
+            Func<bool>? stopRequested = null)
         {
             Calls++;
             return result with { AnalysisId = analyses[0].AnalysisId };

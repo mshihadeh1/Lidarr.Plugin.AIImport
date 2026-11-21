@@ -14,7 +14,11 @@ public sealed record YoloImportResult(
 
 public interface IYoloImportCoordinator
 {
-    YoloImportResult? ProcessNext(IReadOnlyList<AiImportAnalysisDto> analyses);
+    YoloImportResult? ProcessNext(
+        IReadOnlyList<AiImportAnalysisDto> analyses,
+        Action<AiImportJobProgress>? progress = null,
+        int completedAlbums = 0,
+        Func<bool>? stopRequested = null);
 }
 
 public sealed class YoloImportCoordinator : IYoloImportCoordinator
@@ -36,20 +40,37 @@ public sealed class YoloImportCoordinator : IYoloImportCoordinator
         _reconciliation = reconciliation;
     }
 
-    public YoloImportResult? ProcessNext(IReadOnlyList<AiImportAnalysisDto> analyses)
+    public YoloImportResult? ProcessNext(
+        IReadOnlyList<AiImportAnalysisDto> analyses,
+        Action<AiImportJobProgress>? progress = null,
+        int completedAlbums = 0,
+        Func<bool>? stopRequested = null)
     {
         ArgumentNullException.ThrowIfNull(analyses);
+        ThrowIfStopRequested(stopRequested);
         var eligible = analyses.Where(IsCompleteProposal).OrderBy(x => x.AnalysisId, StringComparer.Ordinal).ToArray();
-        return eligible.Length == 0 ? null : ProcessOne(eligible[0]);
+        return eligible.Length == 0 ? null : ProcessOne(eligible[0], progress, completedAlbums, stopRequested);
     }
 
-    private YoloImportResult ProcessOne(AiImportAnalysisDto analysis)
+    private YoloImportResult ProcessOne(
+        AiImportAnalysisDto analysis,
+        Action<AiImportJobProgress>? progress,
+        int completedAlbums,
+        Func<bool>? stopRequested)
     {
+        var totalFiles = analysis.Files.Count;
+        ThrowIfStopRequested(stopRequested);
+        Report(progress, "approving", $"Approving {analysis.Title}", 66, analysis, 62, 0, totalFiles, completedAlbums);
         CreatedApproval created;
         try
         {
+            using var admission = AiImportMutationAdmission.Admit(stopRequested);
             created = _approval.ApproveAsync(analysis.AnalysisId, ApprovalLifetime, CancellationToken.None)
                 .GetAwaiter().GetResult();
+        }
+        catch (AiImportStopRequestedException)
+        {
+            throw;
         }
         catch (Exception exception)
         {
@@ -60,11 +81,18 @@ public sealed class YoloImportCoordinator : IYoloImportCoordinator
         }
 
         ImportExecutionStarted started;
+        ThrowIfStopRequested(stopRequested);
         try
         {
+            Report(progress, "importing", $"Submitting {analysis.Title} to Lidarr", 74, analysis, 75, 0, totalFiles, completedAlbums);
+            using var admission = AiImportMutationAdmission.Admit(stopRequested);
             started = _execution.ExecuteAsync(
                     created.ApprovalId, string.Empty, CancellationToken.None, trustedInProcess: true)
                 .GetAwaiter().GetResult();
+        }
+        catch (AiImportStopRequestedException)
+        {
+            throw;
         }
         catch (ImportOutcomeIndeterminateException exception)
         {
@@ -85,11 +113,14 @@ public sealed class YoloImportCoordinator : IYoloImportCoordinator
 
         try
         {
+            Report(progress, "reconciling", $"Verifying imported files for {analysis.Title}", 86, analysis, 90, 0, totalFiles, completedAlbums);
             var reconciled = _reconciliation.ReconcileAsync(
                     created.ApprovalId, string.Empty, CancellationToken.None, trustedInProcess: true)
                 .GetAwaiter().GetResult();
             if (reconciled.Status == ImportReconciliationStatus.Succeeded)
             {
+                Report(progress, "album-complete", $"Imported and verified {analysis.Title}", 94,
+                    analysis, 100, totalFiles, totalFiles, completedAlbums + 1);
                 return new YoloImportResult(
                     analysis.AnalysisId,
                     "complete",
@@ -126,6 +157,25 @@ public sealed class YoloImportCoordinator : IYoloImportCoordinator
         return proposal.Tracks.Select(x => x.SourceFileId).ToHashSet(StringComparer.Ordinal).SetEquals(sources) &&
                proposal.Tracks.Select(x => x.TrackId).Distinct().Count() == proposal.Tracks.Count;
     }
+
+    private static void ThrowIfStopRequested(Func<bool>? stopRequested)
+    {
+        if (stopRequested?.Invoke() == true) throw new AiImportStopRequestedException();
+    }
+
+    private static void Report(
+        Action<AiImportJobProgress>? progress,
+        string stage,
+        string message,
+        int overallPercent,
+        AiImportAnalysisDto analysis,
+        int albumPercent,
+        int completedFiles,
+        int totalFiles,
+        int completedAlbums) =>
+        progress?.Invoke(new AiImportJobProgress(
+            stage, message, overallPercent, analysis.Title, albumPercent,
+            completedFiles, totalFiles, completedAlbums));
 
     private static string SafeMessage(Exception exception)
     {

@@ -14,7 +14,8 @@ public enum DiscoveryJobState
     Running,
     Succeeded,
     Failed,
-    Indeterminate
+    Indeterminate,
+    Stopped
 }
 
 public sealed record DiscoveryJobRecord(
@@ -27,7 +28,9 @@ public sealed record DiscoveryJobRecord(
     DateTimeOffset? StartedAt,
     DateTimeOffset? CompletedAt,
     AiImportDiscoverResult? Result,
-    string? Error);
+    string? Error,
+    AiImportJobProgress? Progress = null,
+    DateTimeOffset? StopRequestedAt = null);
 
 public sealed record DiscoveryJobCreateResult(DiscoveryJobRecord Job, bool Created);
 
@@ -68,7 +71,8 @@ public sealed class DiscoveryJobStore
 
             var created = new DiscoveryJobRecord(
                 Guid.NewGuid().ToString("N"), providerDefinitionId, null, DiscoveryJobState.Queued,
-                _timeProvider.GetUtcNow(), null, null, null, null);
+                _timeProvider.GetUtcNow(), null, null, null, null,
+                new AiImportJobProgress("queued", "Waiting for Lidarr to start discovery", 0, UpdatedAt: _timeProvider.GetUtcNow()));
             jobs.Add(created);
             Trim(jobs);
             WriteLocked(jobs);
@@ -90,8 +94,35 @@ public sealed class DiscoveryJobStore
         {
             State = DiscoveryJobState.Running,
             StartedAt = job.StartedAt ?? _timeProvider.GetUtcNow(),
-            Error = null
+            Error = null,
+            Progress = job.Progress is null or { OverallPercent: 0 }
+                ? new AiImportJobProgress("starting", "Starting AI Import", 3, UpdatedAt: _timeProvider.GetUtcNow())
+                : job.Progress
         });
+
+    public DiscoveryJobRecord UpdateProgress(string jobId, AiImportJobProgress progress)
+    {
+        ArgumentNullException.ThrowIfNull(progress);
+        var sanitized = SanitizeProgress(progress);
+        return Update(jobId, job =>
+        {
+            if (IsTerminal(job.State)) return job;
+            var beginsFreshPass = string.Equals(sanitized.Stage, "scanning-queue", StringComparison.Ordinal) &&
+                                  job.Progress?.Stage is not ("starting" or "scanning-queue");
+            return job with
+            {
+                State = DiscoveryJobState.Running,
+                StartedAt = job.StartedAt ?? _timeProvider.GetUtcNow(),
+                Progress = sanitized with
+                {
+                    OverallPercent = beginsFreshPass
+                        ? sanitized.OverallPercent
+                        : Math.Max(job.Progress?.OverallPercent ?? 0, sanitized.OverallPercent),
+                    UpdatedAt = _timeProvider.GetUtcNow()
+                }
+            };
+        });
+    }
 
     public DiscoveryJobRecord Complete(string jobId, AiImportDiscoverResult result)
     {
@@ -102,7 +133,15 @@ public sealed class DiscoveryJobStore
             StartedAt = job.StartedAt ?? _timeProvider.GetUtcNow(),
             CompletedAt = _timeProvider.GetUtcNow(),
             Result = result,
-            Error = null
+            Error = null,
+            Progress = new AiImportJobProgress(
+                "complete", "AI Import finished", 100,
+                job.Progress?.CurrentAlbum,
+                job.Progress?.CurrentAlbum is null ? null : 100,
+                job.Progress?.TotalFiles ?? 0,
+                job.Progress?.TotalFiles ?? 0,
+                job.Progress?.CompletedAlbums ?? 0,
+                _timeProvider.GetUtcNow())
         });
     }
 
@@ -111,6 +150,53 @@ public sealed class DiscoveryJobStore
 
     public DiscoveryJobRecord MarkIndeterminate(string jobId, string error) =>
         Finish(jobId, DiscoveryJobState.Indeterminate, error);
+
+    public DiscoveryJobRecord RequestStop(string jobId) =>
+        Update(jobId, job => IsTerminal(job.State) ? job : job with
+        {
+            StopRequestedAt = job.StopRequestedAt ?? _timeProvider.GetUtcNow(),
+            Progress = new AiImportJobProgress(
+                "stopping",
+                "Stop requested. Submitted work will continue through reconciliation or recovery; no new mutation will start, and unresolved outcomes remain indeterminate.",
+                job.Progress?.OverallPercent ?? 0,
+                job.Progress?.CurrentAlbum,
+                job.Progress?.AlbumPercent,
+                job.Progress?.CompletedFiles ?? 0,
+                job.Progress?.TotalFiles ?? 0,
+                job.Progress?.CompletedAlbums ?? 0,
+                _timeProvider.GetUtcNow())
+        });
+
+    public bool IsStopRequested(string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobId)) return false;
+        lock (_gate)
+        {
+            using var transaction = AcquireFileLock();
+            var matches = ReadLocked().Where(job => string.Equals(job.JobId, jobId, StringComparison.Ordinal)).ToArray();
+            if (matches.Length != 1) throw new InvalidDataException("Discovery job state is missing or ambiguous.");
+            return matches[0].StopRequestedAt is not null;
+        }
+    }
+
+    public DiscoveryJobRecord MarkStopped(string jobId, string message)
+    {
+        var safeMessage = SafeText(message, 300);
+        return Update(jobId, job => IsTerminal(job.State) ? job : job with
+        {
+            State = DiscoveryJobState.Stopped,
+            StartedAt = job.StartedAt ?? _timeProvider.GetUtcNow(),
+            CompletedAt = _timeProvider.GetUtcNow(),
+            Result = null,
+            Error = null,
+            StopRequestedAt = job.StopRequestedAt ?? _timeProvider.GetUtcNow(),
+            Progress = new AiImportJobProgress(
+                "stopped", safeMessage, job.Progress?.OverallPercent ?? 0,
+                job.Progress?.CurrentAlbum, job.Progress?.AlbumPercent,
+                job.Progress?.CompletedFiles ?? 0, job.Progress?.TotalFiles ?? 0,
+                job.Progress?.CompletedAlbums ?? 0, _timeProvider.GetUtcNow())
+        });
+    }
 
     public DiscoveryJobRecord? GetLatest(int providerDefinitionId)
     {
@@ -130,13 +216,17 @@ public sealed class DiscoveryJobStore
         if (string.IsNullOrWhiteSpace(error)) error = "The server-side discovery job did not complete.";
         var safeError = error.Replace('\r', ' ').Replace('\n', ' ').Trim();
         if (safeError.Length > 500) safeError = safeError[..500];
+        var safeProgressMessage = SafeText(safeError, 300);
         return Update(jobId, job => IsTerminal(job.State) ? job : job with
         {
             State = state,
             StartedAt = job.StartedAt ?? _timeProvider.GetUtcNow(),
             CompletedAt = _timeProvider.GetUtcNow(),
             Result = null,
-            Error = safeError
+            Error = safeError,
+            Progress = job.Progress is null
+                ? new AiImportJobProgress(state.ToString().ToLowerInvariant(), safeProgressMessage, 100, UpdatedAt: _timeProvider.GetUtcNow())
+                : job.Progress with { Stage = state.ToString().ToLowerInvariant(), Message = safeProgressMessage, UpdatedAt = _timeProvider.GetUtcNow() }
         });
     }
 
@@ -228,17 +318,57 @@ public sealed class DiscoveryJobStore
                             job.CreatedAt == default ||
                             (job.StartedAt is not null && job.StartedAt < job.CreatedAt) ||
                             (job.CompletedAt is not null && job.CompletedAt < (job.StartedAt ?? job.CreatedAt)) ||
+                            (job.StopRequestedAt is not null && job.StopRequestedAt < job.CreatedAt) ||
+                            (job.StopRequestedAt is not null && job.CompletedAt is not null && job.StopRequestedAt > job.CompletedAt) ||
+                            (job.State == DiscoveryJobState.Stopped && job.StopRequestedAt is null) ||
                             (IsTerminal(job.State) != (job.CompletedAt is not null)) ||
                             (job.State == DiscoveryJobState.Succeeded && job.Result is null) ||
-                            (job.State != DiscoveryJobState.Succeeded && job.Result is not null)))
+                            (job.State != DiscoveryJobState.Succeeded && job.Result is not null) ||
+                            job.Progress is not null && (!ValidProgress(job.Progress) || job.Progress.UpdatedAt < job.CreatedAt)))
             throw new InvalidDataException("Discovery job state is malformed.");
+    }
+
+    private AiImportJobProgress SanitizeProgress(AiImportJobProgress progress)
+    {
+        var stage = SafeText(progress.Stage, 40);
+        var message = SafeText(progress.Message, 300);
+        var album = string.IsNullOrWhiteSpace(progress.CurrentAlbum) ? null : SafeText(progress.CurrentAlbum, 200);
+        var sanitized = progress with
+        {
+            Stage = stage,
+            Message = message,
+            OverallPercent = Math.Clamp(progress.OverallPercent, 0, 99),
+            CurrentAlbum = album,
+            AlbumPercent = progress.AlbumPercent is null ? null : Math.Clamp(progress.AlbumPercent.Value, 0, 100),
+            CompletedFiles = Math.Max(0, progress.CompletedFiles),
+            TotalFiles = Math.Max(0, progress.TotalFiles),
+            CompletedAlbums = Math.Max(0, progress.CompletedAlbums)
+        };
+        if (!ValidProgress(sanitized)) throw new InvalidDataException("Discovery progress is malformed.");
+        return sanitized;
+    }
+
+    private static bool ValidProgress(AiImportJobProgress progress) =>
+        !string.IsNullOrWhiteSpace(progress.Stage) && progress.Stage.Length <= 40 &&
+        !string.IsNullOrWhiteSpace(progress.Message) && progress.Message.Length <= 300 &&
+        progress.OverallPercent is >= 0 and <= 100 &&
+        (progress.CurrentAlbum is null || progress.CurrentAlbum.Length <= 200) &&
+        (progress.AlbumPercent is null or >= 0 and <= 100) &&
+        progress.CompletedFiles >= 0 && progress.TotalFiles >= 0 &&
+        progress.CompletedFiles <= progress.TotalFiles && progress.CompletedAlbums >= 0;
+
+    private static string SafeText(string value, int maximum)
+    {
+        var safe = (value ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (string.IsNullOrWhiteSpace(safe)) throw new InvalidDataException("Discovery progress text is required.");
+        return safe.Length <= maximum ? safe : safe[..maximum];
     }
 
     private static bool IsActive(DiscoveryJobState state) =>
         state is DiscoveryJobState.Queued or DiscoveryJobState.Running;
 
     private static bool IsTerminal(DiscoveryJobState state) =>
-        state is DiscoveryJobState.Succeeded or DiscoveryJobState.Failed or DiscoveryJobState.Indeterminate;
+        state is DiscoveryJobState.Succeeded or DiscoveryJobState.Failed or DiscoveryJobState.Indeterminate or DiscoveryJobState.Stopped;
 
     private static void Trim(List<DiscoveryJobRecord> jobs)
     {
@@ -275,7 +405,9 @@ public interface IAiImportDiscoveryJobService
 {
     DiscoveryJobRecord Start(int providerDefinitionId);
     DiscoveryJobRecord RestartAfterIndeterminate(int providerDefinitionId);
+    DiscoveryJobRecord RestartAfterStopped(int providerDefinitionId);
     DiscoveryJobRecord? GetLatest(int providerDefinitionId);
+    DiscoveryJobRecord RequestStop(int providerDefinitionId);
 }
 
 public sealed class AiImportDiscoveryJobService : IAiImportDiscoveryJobService
@@ -301,7 +433,7 @@ public sealed class AiImportDiscoveryJobService : IAiImportDiscoveryJobService
         {
             _settingsResolver.ResolveEnabled(providerDefinitionId);
             var latest = Reconcile(_store.GetLatest(providerDefinitionId));
-            if (latest is { State: DiscoveryJobState.Indeterminate }) return latest;
+            if (latest is { State: DiscoveryJobState.Indeterminate or DiscoveryJobState.Stopped }) return latest;
             return StartNew(providerDefinitionId);
         }
     }
@@ -319,12 +451,38 @@ public sealed class AiImportDiscoveryJobService : IAiImportDiscoveryJobService
         }
     }
 
+    public DiscoveryJobRecord RestartAfterStopped(int providerDefinitionId)
+    {
+        lock (AdmissionGate)
+        {
+            _settingsResolver.ResolveEnabled(providerDefinitionId);
+            var latest = Reconcile(_store.GetLatest(providerDefinitionId));
+            if (latest is { State: DiscoveryJobState.Queued or DiscoveryJobState.Running }) return latest;
+            if (latest is not { State: DiscoveryJobState.Stopped })
+                throw new InvalidOperationException("There is no stopped discovery job to resume.");
+            return StartNew(providerDefinitionId);
+        }
+    }
+
     public DiscoveryJobRecord? GetLatest(int providerDefinitionId)
     {
         lock (AdmissionGate)
         {
             _settingsResolver.ResolveEnabled(providerDefinitionId);
             return Reconcile(_store.GetLatest(providerDefinitionId));
+        }
+    }
+
+    public DiscoveryJobRecord RequestStop(int providerDefinitionId)
+    {
+        lock (AdmissionGate)
+        {
+            _settingsResolver.ResolveEnabled(providerDefinitionId);
+            var latest = _store.GetLatest(providerDefinitionId)
+                ?? throw new InvalidOperationException("There is no AI Import job to stop.");
+            return latest.State is DiscoveryJobState.Queued or DiscoveryJobState.Running
+                ? AiImportMutationAdmission.PersistStop(() => _store.RequestStop(latest.JobId))
+                : latest;
         }
     }
 

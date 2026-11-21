@@ -566,7 +566,6 @@ public sealed class ApprovalStore
                     ApprovalState.Failed or ApprovalState.RollbackExecuting or ApprovalState.RolledBack or
                     ApprovalState.RollbackIndeterminate)
                 .OrderByDescending(record => record.CompletedAt ?? record.CreatedAt)
-                .Take(200)
                 .ToArray();
         }
         finally

@@ -1,4 +1,4 @@
-# Lidarr AI Import v2.0.6
+# Lidarr AI Import v2.0.7
 
 Standalone AI-assisted strict-hardlink imports for **Lidarr 3.1.2.4913**, with optional unattended MusicBrainz-backed YOLO mode.
 
@@ -46,7 +46,7 @@ The plugin checks these settings again before authorization and command submissi
 
 ### From a GitHub release
 
-Install `Lidarr.Plugin.AIImport-v2.0.6.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
+Install `Lidarr.Plugin.AIImport-v2.0.7.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
 ### Manual installation
 
@@ -68,7 +68,7 @@ Install `Lidarr.Plugin.AIImport-v2.0.6.net8.0.zip` through Lidarr's plugin suppo
    ```
 
 3. Restart Lidarr.
-4. Confirm **System → Plugins** reports `AI Import` version `2.0.6.0`.
+4. Confirm **System → Plugins** reports `AI Import` version `2.0.7.0`.
 5. Configure the exact Media Management settings listed above and restart Lidarr once more.
 
 ## Configure the LLM endpoint
@@ -136,6 +136,8 @@ v2.0.5 returns from a submitted YOLO import immediately instead of holding the b
 
 v2.0.6 makes interactive discovery a durable Lidarr server-side job. The initiating browser can close immediately; reopening the workspace from any device restores queued/running status and the persisted result. Manual, periodic, and tracked-download triggers share duplicate suppression. Restart-orphaned commands become indeterminate instead of retrying silently, and starting again requires an explicit warning acknowledgement.
 
+v2.0.7 redesigns the workspace around **AI Import**, **Manual Review**, and **Import History** tabs. Durable server-owned stage and album progress survives browser closure. Import History exposes every audited plug-in import, exact source/destination and Lidarr evidence, and the existing fail-closed rollback that removes exact hardlinks and matching track-file records while retaining source files and library metadata. A durable stop request prevents further mutations. Submitted work continues through reconciliation or recovery; any unresolved outcome remains indeterminate instead of being reported as safely stopped. Periodic and tracked-download triggers remain paused until the operator explicitly starts AI Import again.
+
 ### Downloads for artists not yet in Lidarr
 
 When qBittorrent sends a failed/blocked download to Lidarr and every source file has the same valid MusicBrainz artist, release-group, and release tags, discovery offers **Add verified artist and album**. Select an existing accessible Lidarr root folder, quality profile, and metadata profile, review the exact MusicBrainz IDs, and explicitly approve the library addition. The plugin calls Lidarr's own metadata, add, refresh, release-monitoring, and read-back services. It adds or reuses only the exact artist/album, selects only the tagged release, disables searches, and does not import files during this action. Run discovery again, review the resulting Lidarr-backed mapping, create an expiring approval, and execute normally. With **YOLO Mode** enabled, this add-to-library step is performed automatically during discovery and the resulting mapping is promoted to a proposed mapping for your final review.
@@ -163,7 +165,7 @@ If an execute response is lost or reports `Indeterminate`, do not execute again.
 
 ```bash
 git submodule update --init --recursive
-VERSION=2.0.6 ./scripts/build.sh
+VERSION=2.0.7 ./scripts/build.sh
 ```
 
 A dirty local verification build requires `ALLOW_DIRTY_BUILD=1` and intentionally does not claim a corresponding-source commit URL. Release packages must be produced from a clean tagged tree.
