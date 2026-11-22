@@ -45,6 +45,16 @@ public sealed class ImportedSourceReconcilerTests
     }
 
     [Test]
+    public void Exact_current_hardlink_evidence_suppresses_a_repeat_when_lidarr_rewrites_dropped_path()
+    {
+        var fixture = Fixture(destinationInode: 20, droppedPath: "/downloads/rewritten/01.flac");
+
+        var result = fixture.Reconciler.Classify(fixture.Source, "download-1");
+
+        Assert.That(result, Is.EqualTo(ExistingImportClassification.AlreadyImported));
+    }
+
+    [Test]
     public void Source_replacement_between_identity_reads_is_indeterminate()
     {
         var fixture = Fixture(destinationInode: 20, sourceAfterInode: 22);
@@ -68,7 +78,8 @@ public sealed class ImportedSourceReconcilerTests
         ulong destinationInode,
         IReadOnlyList<EntityHistory>? history = null,
         ulong? sourceAfterInode = null,
-        bool mutateTrackOnSecondRead = false)
+        bool mutateTrackOnSecondRead = false,
+        string? droppedPath = null)
     {
         const string sourcePath = "/downloads/Artist/Album/01.flac";
         const string importedPath = "/music/Artist/Album/01.flac";
@@ -97,7 +108,7 @@ public sealed class ImportedSourceReconcilerTests
             Data = new Dictionary<string, string>
             {
                 ["fileId"] = "40",
-                ["droppedPath"] = sourcePath,
+                ["droppedPath"] = droppedPath ?? sourcePath,
                 ["importedPath"] = importedPath,
                 ["size"] = "123",
                 ["indexerFlags"] = "0"
