@@ -44,7 +44,7 @@ internal sealed class ImportedSourceReconciler
             .Where(item => item.Data.TryGetValue("droppedPath", out var path) &&
                 string.Equals(path, source.Path, StringComparison.Ordinal))
             .ToArray();
-        if (matches.Length == 0) return ExistingImportClassification.Pending;
+        if (matches.Length == 0) return ClassifyByCurrentHardlinkIdentity(historyItems, source, downloadId);
         if (matches.Length != 1) return ExistingImportClassification.Indeterminate;
 
         try
@@ -70,6 +70,50 @@ internal sealed class ImportedSourceReconciler
             return sourceIdentityBefore == sourceIdentityAfter &&
                 sourceIdentityAfter.Device == destinationIdentity.Device &&
                 sourceIdentityAfter.Inode == destinationIdentity.Inode && sourceIdentityAfter.Size == source.Size
+                ? ExistingImportClassification.AlreadyImported
+                : ExistingImportClassification.Indeterminate;
+        }
+        catch (Exception exception) when (exception is ArgumentException or ApplicationException or InvalidDataException or IOException or UnauthorizedAccessException or InvalidOperationException or JsonException)
+        {
+            return ExistingImportClassification.Indeterminate;
+        }
+    }
+
+    private ExistingImportClassification ClassifyByCurrentHardlinkIdentity(
+        IReadOnlyList<EntityHistory> historyItems,
+        ManualImportItem source,
+        string downloadId)
+    {
+        try
+        {
+            var sourceIdentityBefore = _identities.InspectAsync(source.Path, CancellationToken.None).GetAwaiter().GetResult();
+            var candidates = new List<(EntityHistory History, int FileId, string ImportedPath)>();
+            foreach (var history in historyItems)
+            {
+                if (!string.Equals(history.DownloadId, downloadId, StringComparison.Ordinal) ||
+                    history.ArtistId <= 0 || history.AlbumId <= 0 || history.TrackId <= 0 ||
+                    ParseLong(history.Data, "size") != source.Size ||
+                    ParseFlags(history.Data, "indexerFlags") != source.IndexerFlags ||
+                    !JsonNode.DeepEquals(ToJson(history.Quality), ToJson(source.Quality)))
+                    continue;
+
+                var fileId = ParsePositive(history.Data, "fileId");
+                var importedPath = RequiredAbsolute(history.Data, "importedPath");
+                if (!CurrentStateMatches(history, source, fileId, importedPath)) continue;
+                var destinationIdentity = _identities.InspectAsync(importedPath, CancellationToken.None).GetAwaiter().GetResult();
+                if (sourceIdentityBefore.Device == destinationIdentity.Device &&
+                    sourceIdentityBefore.Inode == destinationIdentity.Inode &&
+                    sourceIdentityBefore.Size == source.Size && destinationIdentity.Size == source.Size)
+                    candidates.Add((history, fileId, importedPath));
+            }
+
+            if (candidates.Count == 0) return ExistingImportClassification.Pending;
+            if (candidates.Count != 1) return ExistingImportClassification.Indeterminate;
+            var candidate = candidates[0];
+            if (!CurrentStateMatches(candidate.History, source, candidate.FileId, candidate.ImportedPath))
+                return ExistingImportClassification.Indeterminate;
+            var sourceIdentityAfter = _identities.InspectAsync(source.Path, CancellationToken.None).GetAwaiter().GetResult();
+            return sourceIdentityBefore == sourceIdentityAfter
                 ? ExistingImportClassification.AlreadyImported
                 : ExistingImportClassification.Indeterminate;
         }
