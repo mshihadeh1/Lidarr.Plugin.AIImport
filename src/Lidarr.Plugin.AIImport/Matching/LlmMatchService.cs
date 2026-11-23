@@ -17,8 +17,9 @@ public interface ILlmMatchService
 public sealed class LlmMatchService : ILlmMatchService
 {
     private const string SystemPrompt = """
-        Match every source file to exactly one track from exactly one supplied release candidate.
-        Use tagged artist, album, title, disc, track number, duration, and MusicBrainz identifiers as evidence.
+        Match every source file to exactly one track from exactly one supplied Lidarr release candidate.
+        Prefer complete, consistent lidarrSuggestedReleaseId and lidarrSuggestedTrackIds values, but independently reject suggestions that are missing from the supplied candidates.
+        Use tagged artist, album, title, disc, track number, duration, and MusicBrainz identifiers as supporting evidence.
         Return only JSON with exactly these root properties:
         schemaVersion, status, artistId, albumId, releaseId, confidence, explanation, tracks.
         status is proposed or manualReview. A proposed result maps every sourceFileId exactly once to a unique available trackId.
@@ -61,7 +62,9 @@ public sealed class LlmMatchService : ILlmMatchService
                 x.ArtistMusicBrainzId,
                 x.AlbumMusicBrainzId,
                 x.ReleaseMusicBrainzId,
-                x.RecordingMusicBrainzId
+                x.RecordingMusicBrainzId,
+                lidarrSuggestedReleaseId = x.SuggestedReleaseId,
+                lidarrSuggestedTrackIds = x.SuggestedTrackIds
             }),
             releaseCandidates = verified.Select(x => new
             {

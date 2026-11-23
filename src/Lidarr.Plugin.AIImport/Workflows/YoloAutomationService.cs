@@ -22,6 +22,7 @@ public sealed class YoloAutomationService :
     private readonly ImportReconciliationCoordinator _reconciliation;
     private readonly YoloRuntimeStore _runtime;
     private readonly Logger _logger;
+    private readonly HashSet<string> _reportedUnresolvedApprovals = new(StringComparer.Ordinal);
     private Timer? _timer;
     private int _tickRunning;
     private CancellationTokenSource? _shutdown;
@@ -108,14 +109,17 @@ public sealed class YoloAutomationService :
                     .GetAwaiter().GetResult();
                 _logger.Info("AI Import recovery reconciliation approval={0} status={1}",
                     approval.ApprovalId, result.Status);
+                if (result.Status == ImportReconciliationStatus.Succeeded)
+                    _reportedUnresolvedApprovals.Remove(approval.ApprovalId);
                 unresolved |= result.Status != ImportReconciliationStatus.Succeeded;
             }
             catch (Exception exception)
             {
                 unresolved = true;
-                _logger.Warn(exception,
-                    "AI Import recovery reconciliation could not prove approval {0}; it remains non-retryable",
-                    approval.ApprovalId);
+                if (_reportedUnresolvedApprovals.Add(approval.ApprovalId))
+                    _logger.Warn(exception,
+                        "AI Import recovery reconciliation could not prove approval {0}; it remains non-retryable. Identical failures will be suppressed until restart or successful reconciliation",
+                        approval.ApprovalId);
             }
         }
         return unresolved;

@@ -118,6 +118,9 @@ public sealed class DiscoveryJobStore
                     OverallPercent = beginsFreshPass
                         ? sanitized.OverallPercent
                         : Math.Max(job.Progress?.OverallPercent ?? 0, sanitized.OverallPercent),
+                    Preview = beginsFreshPass
+                        ? sanitized.Preview
+                        : sanitized.Preview ?? job.Progress?.Preview,
                     UpdatedAt = _timeProvider.GetUtcNow()
                 }
             };

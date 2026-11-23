@@ -55,6 +55,8 @@ public sealed record SourceFileCandidate(
     [JsonIgnore] public string? DownloadId { get; init; }
     [JsonIgnore] public long Size { get; init; }
     [JsonIgnore] public int ManualImportId { get; init; }
+    [JsonIgnore] public int? SuggestedReleaseId { get; init; }
+    [JsonIgnore] public IReadOnlyList<int> SuggestedTrackIds { get; init; } = Array.Empty<int>();
 }
 
 public sealed record TrackCandidate(

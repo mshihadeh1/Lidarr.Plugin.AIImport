@@ -65,7 +65,8 @@ public sealed record AiImportJobProgress(
     int CompletedFiles = 0,
     int TotalFiles = 0,
     int CompletedAlbums = 0,
-    DateTimeOffset UpdatedAt = default);
+    DateTimeOffset UpdatedAt = default,
+    AiImportDiscoverResult? Preview = null);
 
 [method: JsonConstructor]
 public sealed record AiImportDiscoverResult(

@@ -86,6 +86,31 @@ public sealed class DiscoveryJobStoreTests
     }
 
     [Test]
+    public void Running_review_preview_is_durable_until_a_fresh_snapshot_begins()
+    {
+        using var temp = new TestTempDirectory();
+        var path = Path.Combine(temp.Path, "discovery-jobs.json");
+        var store = new DiscoveryJobStore(path);
+        var job = store.CreateOrGetActive(27).Job;
+        var preview = Result();
+
+        store.UpdateProgress(job.JobId, new AiImportJobProgress(
+            "collecting-review", "Publishing safe read-only review results", 58,
+            "Artist — Album", 60, Preview: preview));
+        store.UpdateProgress(job.JobId, new AiImportJobProgress(
+            "matching", "Matching another album", 59, "Other album", 20));
+
+        var reloaded = new DiscoveryJobStore(path).GetLatest(27)!;
+        var fresh = store.UpdateProgress(job.JobId, new AiImportJobProgress(
+            "scanning-queue", "Scanning a fresh Lidarr snapshot", 10));
+        Assert.Multiple(() =>
+        {
+            Assert.That(reloaded.Progress!.Preview!.CandidateCount, Is.EqualTo(1));
+            Assert.That(fresh.Progress!.Preview, Is.Null);
+        });
+    }
+
+    [Test]
     public void Fresh_discovery_pass_resets_stage_progress_without_erasing_completed_album_count()
     {
         using var temp = new TestTempDirectory();

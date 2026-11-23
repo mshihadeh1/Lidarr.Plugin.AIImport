@@ -174,6 +174,8 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                 if (analysis is not null)
                 {
                     analyses.Add(analysis);
+                    ReportPreview(progress, analyses, diagnostics, settings.YoloMode,
+                        Math.Max(queuePercent, 30), item.Title, completedAlbums);
                 }
                 else if (scan.Files.Count == 0 && scan.AlreadyImportedCount > 0 && scan.IndeterminateCount == 0)
                 {
@@ -212,7 +214,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             }
         }
 
-        var folderAnalyses = ScanUntrackedFolders(settings, diagnostics, progress, completedAlbums, stopRequested);
+        var folderAnalyses = ScanUntrackedFolders(settings, diagnostics, analyses, progress, completedAlbums, stopRequested);
         analyses.AddRange(folderAnalyses);
 
         Report(progress, "planning", "Checking verified albums for automatic processing", 60,
@@ -271,6 +273,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
     private List<AiImportAnalysisDto> ScanUntrackedFolders(
         AiImportSettings settings,
         List<AiImportDiscoveryDiagnostic> diagnostics,
+        IReadOnlyList<AiImportAnalysisDto> queueAnalyses,
         Action<AiImportJobProgress>? progress,
         int completedAlbums,
         Func<bool>? stopRequested)
@@ -320,7 +323,12 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                         scan, string.Empty, folder, AiImportSourceKinds.Folder,
                         title, null, settings, out var diagnostic, progress, Math.Max(folderPercent, 50), completedAlbums);
                     if (diagnostic is not null) diagnostics.Add(diagnostic);
-                    if (analysis is not null) analyses.Add(analysis);
+                    if (analysis is not null)
+                    {
+                        analyses.Add(analysis);
+                        ReportPreview(progress, queueAnalyses.Concat(analyses).ToArray(), diagnostics,
+                            settings.YoloMode, Math.Max(folderPercent, 50), title, completedAlbums);
+                    }
                 }
                 catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException or InvalidDataException)
                 {
@@ -543,10 +551,24 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
         int? albumPercent = null,
         int completedFiles = 0,
         int totalFiles = 0,
-        int completedAlbums = 0) =>
+        int completedAlbums = 0,
+        AiImportDiscoverResult? preview = null) =>
         progress?.Invoke(new AiImportJobProgress(
             stage, message, overallPercent, album, albumPercent,
-            completedFiles, totalFiles, completedAlbums));
+            completedFiles, totalFiles, completedAlbums, Preview: preview));
+
+    private static void ReportPreview(
+        Action<AiImportJobProgress>? progress,
+        IReadOnlyList<AiImportAnalysisDto> analyses,
+        IReadOnlyList<AiImportDiscoveryDiagnostic> diagnostics,
+        bool yoloMode,
+        int overallPercent,
+        string album,
+        int completedAlbums) =>
+        Report(progress, "collecting-review", "Publishing safe read-only review results", overallPercent,
+            album, 60, totalFiles: analyses.LastOrDefault()?.Files.Count ?? 0,
+            completedAlbums: completedAlbums,
+            preview: new AiImportDiscoverResult(analyses.ToArray(), diagnostics.ToArray(), yoloMode));
 
     internal static LibraryAdditionDto? GetLibraryAddition(IReadOnlyList<SourceFileCandidate> files)
     {
@@ -698,7 +720,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
                 x.Id, x.Artist, x.Album, x.Title, x.DiscNumber, x.TrackNumbers, x.DurationMs,
                 x.TrackMusicBrainzId, x.ArtistMusicBrainzId, x.AlbumMusicBrainzId,
                 x.ReleaseMusicBrainzId, x.RecordingMusicBrainzId,
-                x.ArtistId, x.AlbumId, x.SourcePath,
+                x.ArtistId, x.AlbumId, x.SuggestedReleaseId, x.SuggestedTrackIds, x.SourcePath,
                 rejections = x.Rejections.OrderBy(value => value, StringComparer.Ordinal)
             }),
             candidates = candidates.OrderBy(x => x.Id),
