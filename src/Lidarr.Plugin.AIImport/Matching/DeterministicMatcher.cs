@@ -82,10 +82,12 @@ public sealed class DeterministicMatcher
         IReadOnlyList<ReleaseCandidate> releases)
     {
         var releaseIds = files.Select(file => file.SuggestedReleaseId).Distinct().ToArray();
+        if (releaseIds.Length != 1) return null;
+        var suggestedReleaseId = releaseIds[0].GetValueOrDefault();
         if (files.Any(file => file.Rejections.Count > 0) ||
-            releaseIds.Length != 1 || releaseIds[0] is not > 0 ||
+            suggestedReleaseId <= 0 ||
             files.Any(file => file.SuggestedTrackIds.Count != 1)) return null;
-        var release = releases.SingleOrDefault(candidate => candidate.Id == releaseIds[0].Value);
+        var release = releases.SingleOrDefault(candidate => candidate.Id == suggestedReleaseId);
         if (release is null || release.ArtistId is null ||
             files.Any(file => file.AlbumId.HasValue && file.AlbumId.Value != release.AlbumId) ||
             files.Any(file => file.ArtistId.HasValue && file.ArtistId.Value != release.ArtistId)) return null;
