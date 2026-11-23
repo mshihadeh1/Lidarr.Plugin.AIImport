@@ -1,4 +1,4 @@
-# Lidarr AI Import v2.0.9
+# Lidarr AI Import v2.0.10
 
 Standalone AI-assisted strict-hardlink imports for **Lidarr 3.1.2.4913**, with optional unattended MusicBrainz-backed YOLO mode.
 
@@ -46,7 +46,7 @@ The plugin checks these settings again before authorization and command submissi
 
 ### From a GitHub release
 
-Install `Lidarr.Plugin.AIImport-v2.0.9.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
+Install `Lidarr.Plugin.AIImport-v2.0.10.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
 ### Manual installation
 
@@ -68,7 +68,7 @@ Install `Lidarr.Plugin.AIImport-v2.0.9.net8.0.zip` through Lidarr's plugin suppo
    ```
 
 3. Restart Lidarr.
-4. Confirm **System → Plugins** reports `AI Import` version `2.0.7.0`.
+4. Confirm **System → Plugins** reports `AI Import` version `2.0.10.0`.
 5. Configure the exact Media Management settings listed above and restart Lidarr once more.
 
 ## Configure the LLM endpoint
@@ -139,6 +139,8 @@ v2.0.6 makes interactive discovery a durable Lidarr server-side job. The initiat
 v2.0.7 redesigns the workspace around **AI Import**, **Manual Review**, and **Import History** tabs. Durable server-owned stage and album progress survives browser closure. Import History exposes every audited plug-in import, exact source/destination and Lidarr evidence, and the existing fail-closed rollback that removes exact hardlinks and matching track-file records while retaining source files and library metadata. A durable stop request prevents further mutations. Submitted work continues through reconciliation or recovery, and unresolved outcomes remain indeterminate rather than being reported as safely stopped. Periodic and tracked-download triggers remain paused until the operator explicitly starts AI Import again.
 
 v2.0.9 recovers imports after Lidarr purges their terminal command rows by requiring the same complete native, filesystem, history, track-file, and track-binding evidence used for ordinary reconciliation. This lets verified imports reach stale Activity cleanup without weakening command identity checks while the command row still exists. v2.0.8's exact hardlink suppression for rewritten history `droppedPath` values remains active; uncertain or conflicting evidence still fails closed and remains non-retryable.
+
+v2.0.10 recovers legacy imports whose command rows were purged and whose historical source identity was rewritten only when unique album history, authoritative current track ownership, durable native authorization, and exact source/destination hardlink identity all agree. Repeated identical recovery warnings are suppressed. Running discovery now exposes durable read-only Manual Review previews, Import History presents concise summaries with expandable evidence, and complete rejection-free Lidarr import suggestions can bypass AI ranking. Rejected or ambiguous suggestions remain subject to ordinary matching and fail-closed validation; when AI is required it receives Lidarr's suggestions as context before MusicBrainz fallback candidates are considered.
 
 ### Downloads for artists not yet in Lidarr
 
