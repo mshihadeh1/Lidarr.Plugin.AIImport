@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Lidarr.Plugin.AIImport.Approval;
 using Lidarr.Plugin.AIImport.Commands;
 using Lidarr.Plugin.AIImport.Configuration;
@@ -22,7 +23,7 @@ public sealed class YoloAutomationService :
     private readonly ImportReconciliationCoordinator _reconciliation;
     private readonly YoloRuntimeStore _runtime;
     private readonly Logger _logger;
-    private readonly HashSet<string> _reportedUnresolvedApprovals = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, string> ReportedUnresolvedApprovals = new(StringComparer.Ordinal);
     private Timer? _timer;
     private int _tickRunning;
     private CancellationTokenSource? _shutdown;
@@ -110,13 +111,13 @@ public sealed class YoloAutomationService :
                 _logger.Info("AI Import recovery reconciliation approval={0} status={1}",
                     approval.ApprovalId, result.Status);
                 if (result.Status == ImportReconciliationStatus.Succeeded)
-                    _reportedUnresolvedApprovals.Remove(approval.ApprovalId);
+                    ClearReportedUnresolved(approval.ApprovalId);
                 unresolved |= result.Status != ImportReconciliationStatus.Succeeded;
             }
             catch (Exception exception)
             {
                 unresolved = true;
-                if (_reportedUnresolvedApprovals.Add(approval.ApprovalId))
+                if (ShouldReportUnresolved(approval.ApprovalId, exception.Message))
                     _logger.Warn(exception,
                         "AI Import recovery reconciliation could not prove approval {0}; it remains non-retryable. Identical failures will be suppressed until restart or successful reconciliation",
                         approval.ApprovalId);
@@ -124,6 +125,23 @@ public sealed class YoloAutomationService :
         }
         return unresolved;
     }
+
+    internal static bool ShouldReportUnresolved(string approvalId, string detail)
+    {
+        while (true)
+        {
+            if (ReportedUnresolvedApprovals.TryGetValue(approvalId, out var previous))
+            {
+                if (string.Equals(previous, detail, StringComparison.Ordinal)) return false;
+                if (ReportedUnresolvedApprovals.TryUpdate(approvalId, detail, previous)) return true;
+                continue;
+            }
+            if (ReportedUnresolvedApprovals.TryAdd(approvalId, detail)) return true;
+        }
+    }
+
+    internal static void ClearReportedUnresolved(string approvalId) =>
+        ReportedUnresolvedApprovals.TryRemove(approvalId, out _);
 
     private void QueuePeriodicDiscovery(CancellationToken cancellationToken)
     {

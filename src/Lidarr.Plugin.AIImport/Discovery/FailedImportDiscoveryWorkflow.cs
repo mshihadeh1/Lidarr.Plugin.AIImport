@@ -141,7 +141,7 @@ public sealed class FailedImportDiscoveryWorkflow : IAiImportDiscoverWorkflow
             throw new InvalidOperationException($"Lidarr {CompatibleLidarrVersion} is required; running version is {_gateway.Version}.");
         }
 
-        Report(progress, "scanning-queue", "Scanning Lidarr's blocked and failed import queue", 10,
+        Report(progress, "fresh-snapshot", "Scanning Lidarr's blocked and failed import queue", 10,
             completedAlbums: completedAlbums);
         var failed = _gateway.GetTrackedDownloads()
             .Where(x => x.State is TrackedImportState.ImportBlocked or TrackedImportState.ImportFailed ||

@@ -98,11 +98,11 @@ public sealed class DiscoveryJobStoreTests
             "collecting-review", "Publishing safe read-only review results", 58,
             "Artist — Album", 60, Preview: preview));
         store.UpdateProgress(job.JobId, new AiImportJobProgress(
-            "matching", "Matching another album", 59, "Other album", 20));
+            "scanning-queue", "Inspecting another album", 59, "Other album", 5));
 
         var reloaded = new DiscoveryJobStore(path).GetLatest(27)!;
         var fresh = store.UpdateProgress(job.JobId, new AiImportJobProgress(
-            "scanning-queue", "Scanning a fresh Lidarr snapshot", 10));
+            "fresh-snapshot", "Scanning a fresh Lidarr snapshot", 10));
         Assert.Multiple(() =>
         {
             Assert.That(reloaded.Progress!.Preview!.CandidateCount, Is.EqualTo(1));
@@ -120,11 +120,11 @@ public sealed class DiscoveryJobStoreTests
             "album-complete", "Imported album", 94, "Album one", 100, 10, 10, 1));
 
         var nextPass = store.UpdateProgress(job.JobId, new AiImportJobProgress(
-            "scanning-queue", "Scanning a fresh Lidarr snapshot", 10, CompletedAlbums: 1));
+            "fresh-snapshot", "Scanning a fresh Lidarr snapshot", 10, CompletedAlbums: 1));
 
         Assert.Multiple(() =>
         {
-            Assert.That(nextPass.Progress!.Stage, Is.EqualTo("scanning-queue"));
+            Assert.That(nextPass.Progress!.Stage, Is.EqualTo("fresh-snapshot"));
             Assert.That(nextPass.Progress.OverallPercent, Is.EqualTo(10));
             Assert.That(nextPass.Progress.CompletedAlbums, Is.EqualTo(1));
         });
