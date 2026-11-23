@@ -3,6 +3,7 @@ using Lidarr.Plugin.AIImport.Approval;
 using Lidarr.Plugin.AIImport.Authorization;
 using Lidarr.Plugin.AIImport.Execution;
 using Lidarr.Plugin.AIImport.Filesystem;
+using NzbDrone.Core.Datastore;
 
 namespace Lidarr.Plugin.AIImport.Tests;
 
@@ -75,6 +76,31 @@ public sealed class ImportReconciliationServiceTests
             Assert.That(result.Status, Is.EqualTo(ImportReconciliationStatus.Succeeded));
             Assert.That(client.CommandReads, Is.Zero);
             Assert.That(result.Message, Does.Contain("receipt was unavailable"));
+        });
+    }
+
+    [Test]
+    public async Task Recovers_from_complete_per_file_evidence_when_lidarr_purged_the_command()
+    {
+        var started = DateTimeOffset.Parse("2026-10-27T08:00:00Z");
+        var client = new FakeClient
+        {
+            Command = new LidarrCommandState(42, "ManualImport", "completed", "successful"),
+            CommandReadException = new ModelNotFoundException(typeof(LidarrCommandState), 42),
+            History = [History(started.AddSeconds(1))],
+            TrackFiles = [new LidarrTrackFileEvidence(501, 5, 10, "/music/track.flac", 123, Quality(), 0)],
+            Tracks = [new LidarrTrackBinding(1001, 5, 10, 501, true)]
+        };
+        var service = new ImportReconciliationService(
+            client, new FakeVerifier(new VerifiedTransferResult(AuthId, TransferResultOutcome.Linked, 1, 2)));
+
+        var result = await service.ReconcileAsync(Plan(), [Binding()], 42, started, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Status, Is.EqualTo(ImportReconciliationStatus.Succeeded));
+            Assert.That(client.CommandReads, Is.EqualTo(1));
+            Assert.That(result.Message, Does.Contain("command record was purged"));
         });
     }
 
@@ -166,6 +192,7 @@ public sealed class ImportReconciliationServiceTests
     private sealed class FakeClient : ILidarrReconciliationClient
     {
         public required LidarrCommandState Command { get; init; }
+        public Exception? CommandReadException { get; init; }
         public IReadOnlyList<LidarrImportHistoryEvidence> History { get; init; } = [];
         public IReadOnlyList<LidarrTrackFileEvidence> TrackFiles { get; init; } = [];
         public IReadOnlyList<LidarrTrackBinding> Tracks { get; init; } = [];
@@ -173,6 +200,7 @@ public sealed class ImportReconciliationServiceTests
         public Task<LidarrCommandState> GetCommandAsync(int commandId, CancellationToken cancellationToken)
         {
             CommandReads++;
+            if (CommandReadException is not null) throw CommandReadException;
             return Task.FromResult(Command);
         }
         public Task<IReadOnlyList<LidarrImportHistoryEvidence>> GetImportHistoryAsync(string downloadId, int albumId, CancellationToken cancellationToken) => Task.FromResult(History);
