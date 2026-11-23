@@ -158,9 +158,7 @@ public sealed class ImportReconciliationService : IImportReconciliationService
                 // requires current ownership and immutable native transfer proof below.
                 matches = history.Where(item =>
                         item.Date >= executionStartedAt &&
-                        item.ArtistId == plan.ArtistId && item.AlbumId == plan.AlbumId && item.TrackId == file.TrackId &&
-                        item.Size == file.Size && item.IndexerFlags == file.IndexerFlags &&
-                        JsonNode.DeepEquals(item.Quality, file.Quality))
+                        item.ArtistId == plan.ArtistId && item.AlbumId == plan.AlbumId && item.TrackId == file.TrackId)
                     .ToArray();
                 usedRewrittenHistoryFallback |= matches.Length == 1;
             }
@@ -234,11 +232,12 @@ public sealed class ImportReconciliationService : IImportReconciliationService
             {
                 var approved = orderedFiles.Single(file => file.TrackId == item.TrackId);
                 var binding = bindingsBySourceId[approved.SourceId];
+                var current = trackFilesById[item.TrackFileId];
                 return new ReconciledImportFile(
                     item.HistoryId, binding.AuthorizationId, approved.SourceId,
                     item.TrackFileId, item.TrackId, approved.SourcePath,
                     approved.Identity.Device, approved.Identity.Inode, item.ImportedPath,
-                    item.Size, item.Quality, item.IndexerFlags,
+                    current.Size, current.Quality, current.IndexerFlags,
                     approved.Identity.Device, approved.Identity.Inode);
             }).ToArray());
     }

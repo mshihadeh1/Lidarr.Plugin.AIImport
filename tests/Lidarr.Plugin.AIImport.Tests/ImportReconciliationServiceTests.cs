@@ -134,6 +134,40 @@ public sealed class ImportReconciliationServiceTests
     }
 
     [Test]
+    public async Task Recovers_from_unique_album_history_using_authoritative_current_metadata()
+    {
+        var started = DateTimeOffset.Parse("2026-10-27T08:00:00Z");
+        var historical = History(started.AddSeconds(1)) with
+        {
+            DownloadId = string.Empty,
+            DroppedPath = "/rewritten/client/path/track.flac",
+            Size = 999,
+            Quality = new JsonObject { ["historical"] = true },
+            IndexerFlags = 7
+        };
+        var client = new FakeClient
+        {
+            Command = new LidarrCommandState(42, "ManualImport", "completed", "successful"),
+            CommandReadException = new ModelNotFoundException(typeof(LidarrCommandState), 42),
+            History = [historical],
+            TrackFiles = [new LidarrTrackFileEvidence(501, 5, 10, "/music/track.flac", 123, Quality(), 0)],
+            Tracks = [new LidarrTrackBinding(1001, 5, 10, 501, true)]
+        };
+        var verifier = new FakeVerifier(new VerifiedTransferResult(AuthId, TransferResultOutcome.Linked, 1, 2));
+
+        var result = await new ImportReconciliationService(client, verifier)
+            .ReconcileAsync(Plan(), [Binding()], 42, started, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Status, Is.EqualTo(ImportReconciliationStatus.Succeeded));
+            Assert.That(result.Files!.Single().Size, Is.EqualTo(123));
+            Assert.That(result.Files!.Single().IndexerFlags, Is.Zero);
+            Assert.That(JsonNode.DeepEquals(result.Files!.Single().Quality, Quality()), Is.True);
+        });
+    }
+
+    [Test]
     public void Rejects_ambiguous_album_history_fallback()
     {
         var started = DateTimeOffset.Parse("2026-10-27T08:00:00Z");

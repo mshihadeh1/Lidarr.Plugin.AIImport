@@ -107,8 +107,7 @@ public sealed class DiscoveryJobStore
         return Update(jobId, job =>
         {
             if (IsTerminal(job.State)) return job;
-            var beginsFreshPass = string.Equals(sanitized.Stage, "scanning-queue", StringComparison.Ordinal) &&
-                                  job.Progress?.Stage is not ("starting" or "scanning-queue");
+            var beginsFreshPass = string.Equals(sanitized.Stage, "fresh-snapshot", StringComparison.Ordinal);
             return job with
             {
                 State = DiscoveryJobState.Running,
