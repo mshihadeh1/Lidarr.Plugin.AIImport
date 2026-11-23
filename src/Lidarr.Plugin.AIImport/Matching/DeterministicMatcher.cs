@@ -39,6 +39,9 @@ public sealed class DeterministicMatcher
             return Manual("Source files were found, but Lidarr supplied no verified release candidates.");
         }
 
+        var lidarrSuggestion = MatchCompleteLidarrSuggestion(files, releases);
+        if (lidarrSuggestion is not null) return lidarrSuggestion;
+
         var scored = releases.Select(release => ScoreRelease(files, release))
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.Release.Id)
@@ -72,6 +75,29 @@ public sealed class DeterministicMatcher
             scored.Where(x => x.Score >= Math.Max(0.5m, best.Score - 0.20m)).Take(5).Select(x => x.Release.Id).ToArray(),
             best.Release.Id,
             best.Mappings.Select(x => new TrackProposal(x.File.Id, x.Track.Id, x.Score)).ToArray());
+    }
+
+    private static DeterministicResult? MatchCompleteLidarrSuggestion(
+        IReadOnlyList<SourceFileCandidate> files,
+        IReadOnlyList<ReleaseCandidate> releases)
+    {
+        var releaseIds = files.Select(file => file.SuggestedReleaseId).Distinct().ToArray();
+        if (files.Any(file => file.Rejections.Count > 0) ||
+            releaseIds.Length != 1 || releaseIds[0] is not > 0 ||
+            files.Any(file => file.SuggestedTrackIds.Count != 1)) return null;
+        var release = releases.SingleOrDefault(candidate => candidate.Id == releaseIds[0].Value);
+        if (release is null || release.ArtistId is null ||
+            files.Any(file => file.AlbumId.HasValue && file.AlbumId.Value != release.AlbumId) ||
+            files.Any(file => file.ArtistId.HasValue && file.ArtistId.Value != release.ArtistId)) return null;
+        var available = release.Tracks.Where(track => !track.HasFile).ToDictionary(track => track.Id);
+        var trackIds = files.Select(file => file.SuggestedTrackIds[0]).ToArray();
+        if (trackIds.Distinct().Count() != files.Count || trackIds.Any(id => !available.ContainsKey(id))) return null;
+        var mappings = files.OrderBy(file => file.Id, StringComparer.Ordinal)
+            .Select(file => new TrackProposal(file.Id, file.SuggestedTrackIds[0], 1m)).ToArray();
+        return new DeterministicResult(
+            DeterministicStatus.Proposed, release.Id, 1m, mappings,
+            "Lidarr supplied one complete, unique release and track mapping; AI ranking was not required.",
+            [release.Id], release.Id, mappings);
     }
 
     private static ScoredRelease ScoreRelease(IReadOnlyList<SourceFileCandidate> files, ReleaseCandidate release)

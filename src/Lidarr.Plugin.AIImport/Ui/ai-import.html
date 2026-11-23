@@ -535,6 +535,27 @@
     return String(value || 'working').replace(/-/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
   }
 
+  function renderRunningPreview(preview) {
+    const analyses = (preview && preview.analyses) || [];
+    const diagnostics = (preview && preview.diagnostics) || [];
+    reviewCount.textContent = String(analyses.length + diagnostics.length);
+    results.replaceChildren();
+    diagnostics.forEach(item => results.appendChild(element(
+      'p', `${item.message} Already imported: ${item.alreadyImportedCount}; indeterminate: ${item.indeterminateCount}.`,
+      item.indeterminateCount ? 'error' : 'muted')));
+    analyses.forEach(analysis => {
+      const card = element('article', null, 'card');
+      const heading = element('div', null, 'section-title');
+      heading.appendChild(element('h2', analysis.title || 'Album awaiting review'));
+      heading.appendChild(element('span', analysis.proposal && analysis.proposal.status || 'review', 'badge warn'));
+      card.appendChild(heading);
+      card.appendChild(element('p', analysis.proposal && analysis.proposal.explanation || 'Matching is still in progress.', 'muted'));
+      card.appendChild(element('p', `${(analysis.files || []).length} source files · ${(analysis.candidates || []).length} verified Lidarr release candidates`, 'muted'));
+      card.appendChild(element('p', 'Read-only preview. Approval controls appear after the fresh snapshot finishes.', 'muted'));
+      results.appendChild(card);
+    });
+  }
+
   function renderJobProgress(job, state) {
     if (!job || state === 'none') {
       progressPanel.classList.add('hidden');
@@ -587,6 +608,15 @@
       summary.textContent = job.stopRequestedAt
         ? 'Stop requested. Reconciliation or recovery for any submitted import will continue; AI Import will not start another mutation.'
         : `Discovery is ${state} on the Lidarr server. It is safe to close this tab and come back from any device.`;
+      const preview = job.progress && job.progress.preview;
+      if (preview && ((preview.analyses || []).length || (preview.diagnostics || []).length)) {
+        renderRunningPreview(preview);
+      } else {
+        reviewCount.textContent = '…';
+        results.replaceChildren(element('div',
+          `AI Import is still scanning${job.progress && job.progress.currentAlbum ? ` ${job.progress.currentAlbum}` : ''}. Manual-review albums appear here as read-only previews once each mapping is validated.`,
+          'empty-state'));
+      }
       return true;
     }
     discoveryNeedsAcknowledgement = state === 'indeterminate';
@@ -699,20 +729,24 @@
         const rolledBack = Boolean(record.rolledBackAt);
         const card = element('article', null, `card${succeeded && !rolledBack ? ' proposed' : ''}`);
         const heading = element('div', null, 'section-title');
-        heading.appendChild(element('h2', `Album ${record.albumId} · release ${record.releaseId}`));
+        const stateLabel = rolledBack ? 'Rolled-back import' : succeeded ? 'Verified import' : 'Import needs attention';
+        heading.appendChild(element('h2', stateLabel));
         heading.appendChild(element('span', rolledBack ? 'Rolled back' : succeeded ? 'Verified import' : record.state, rolledBack ? 'badge warn' : succeeded ? 'badge good' : 'badge warn'));
         card.appendChild(heading);
+        card.appendChild(element('p', `Album ${record.albumId} · release ${record.releaseId} · ${formatDate(record.completedAt || record.createdAt)}`, 'muted'));
+        card.appendChild(element('p', record.outcome || 'No outcome recorded.', succeeded ? 'success' : 'muted'));
+        const technical = element('details');
+        technical.appendChild(element('summary', 'Technical details and recovery controls'));
         const meta = element('div', null, 'history-meta');
-        const dateLabel = succeeded ? 'Imported' : rolledBack ? 'Completed' : 'Started';
+        const dateLabel = rolledBack ? 'Completed' : succeeded ? 'Imported' : 'Started';
         meta.appendChild(element('span', `${dateLabel} ${formatDate(record.completedAt || record.createdAt)}`));
         meta.appendChild(element('span', `Source: ${record.downloadId || 'untracked folder'}`));
         meta.appendChild(element('span', `Lidarr command: ${record.commandId || 'none'}`));
-        card.appendChild(meta);
-        card.appendChild(element('p', record.outcome || 'No outcome recorded.', succeeded ? 'success' : 'muted'));
-        if (rolledBack) card.appendChild(element('p', `Rolled back ${formatDate(record.rolledBackAt)}. The imported hardlinks and their Lidarr track-file records were removed; source files were retained.`, 'muted'));
+        technical.appendChild(meta);
+        if (rolledBack) technical.appendChild(element('p', `Rolled back ${formatDate(record.rolledBackAt)}. The imported hardlinks and their Lidarr track-file records were removed; source files were retained.`, 'muted'));
         if (record.activityCleanupStartedAt) {
           const cleanupState = record.activityCleanupCompletedAt ? 'verified complete' : 'indeterminate/incomplete';
-          card.appendChild(element('p', `Activity cleanup: ${cleanupState} · ${record.activityCleanupOutcome || 'No outcome recorded.'}`, record.activityCleanupCompletedAt ? 'success' : 'error'));
+          technical.appendChild(element('p', `Activity cleanup: ${cleanupState} · ${record.activityCleanupOutcome || 'No outcome recorded.'}`, record.activityCleanupCompletedAt ? 'success' : 'error'));
         }
 
         const evidence = element('details');
@@ -732,8 +766,8 @@
           });
           table.appendChild(body); evidence.appendChild(table);
         }
-        card.appendChild(evidence);
-        if (record.legacy) card.appendChild(element('p', 'Legacy record: exact destination evidence is unavailable, so rollback is disabled.', 'muted'));
+        technical.appendChild(evidence);
+        if (record.legacy) technical.appendChild(element('p', 'Legacy record: exact destination evidence is unavailable, so rollback is disabled.', 'muted'));
         if (record.canRollback) {
           const rollbackPanel = element('div', null, 'rollback-panel');
           rollbackPanel.appendChild(element('p', 'Rollback removes the exact imported hardlinks and their matching track-file records from Lidarr. Source files are always retained. Metadata such as the artist and album remains in Lidarr.'));
@@ -751,8 +785,9 @@
             }
           });
           rollbackPanel.appendChild(confirmation); rollbackPanel.appendChild(document.createTextNode(' ')); rollbackPanel.appendChild(rollback); rollbackPanel.appendChild(output);
-          card.appendChild(rollbackPanel);
+          technical.appendChild(rollbackPanel);
         }
+        card.appendChild(technical);
         history.appendChild(card);
       });
       if (!records.length) history.appendChild(element('div', 'No AI Import records yet. Completed and rolled-back imports will appear here.', 'empty-state'));

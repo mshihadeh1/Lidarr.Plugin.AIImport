@@ -61,6 +61,9 @@ public sealed class AiImportWorkspaceMapperTests
             Assert.That(html, Does.Contain("id=\"run-progress\""));
             Assert.That(html, Does.Contain("id=\"album-progress\""));
             Assert.That(html, Does.Contain("function renderJobProgress"));
+            Assert.That(html, Does.Contain("function renderRunningPreview"));
+            Assert.That(html, Does.Contain("Read-only preview. Approval controls appear after the fresh snapshot finishes."));
+            Assert.That(html, Does.Contain("Technical details and recovery controls"));
             Assert.That(html, Does.Contain("--lidarr-green:#00a65b"));
             Assert.That(html, Does.Contain("--page:#202020"));
             Assert.That(html, Does.Contain("role=\"progressbar\""));

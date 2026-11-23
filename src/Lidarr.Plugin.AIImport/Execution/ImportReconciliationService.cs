@@ -139,9 +139,10 @@ public sealed class ImportReconciliationService : IImportReconciliationService
         var history = await _lidarr.GetImportHistoryAsync(plan.DownloadId, plan.AlbumId, cancellationToken).ConfigureAwait(false);
         var orderedFiles = plan.Files.OrderBy(file => file.SourceId, StringComparer.Ordinal).ToArray();
         var selectedHistory = new List<LidarrImportHistoryEvidence>(orderedFiles.Length);
+        var usedRewrittenHistoryFallback = false;
         foreach (var file in orderedFiles)
         {
-            var matches = history.Where(item =>
+            var exactMatches = history.Where(item =>
                     item.Date >= executionStartedAt &&
                     item.ArtistId == plan.ArtistId && item.AlbumId == plan.AlbumId && item.TrackId == file.TrackId &&
                     string.Equals(item.DownloadId, file.DownloadId, StringComparison.Ordinal) &&
@@ -149,6 +150,20 @@ public sealed class ImportReconciliationService : IImportReconciliationService
                     item.Size == file.Size && item.IndexerFlags == file.IndexerFlags &&
                     JsonNode.DeepEquals(item.Quality, file.Quality))
                 .ToArray();
+            var matches = exactMatches;
+            if (matches.Length == 0)
+            {
+                // Lidarr and download clients may rewrite droppedPath or omit the download ID.
+                // A unique album-scoped event identifies the destination, but success still
+                // requires current ownership and immutable native transfer proof below.
+                matches = history.Where(item =>
+                        item.Date >= executionStartedAt &&
+                        item.ArtistId == plan.ArtistId && item.AlbumId == plan.AlbumId && item.TrackId == file.TrackId &&
+                        item.Size == file.Size && item.IndexerFlags == file.IndexerFlags &&
+                        JsonNode.DeepEquals(item.Quality, file.Quality))
+                    .ToArray();
+                usedRewrittenHistoryFallback |= matches.Length == 1;
+            }
             if (matches.Length == 0 && _timeProvider.GetUtcNow() - executionStartedAt < EvidenceGracePeriod)
                 return new ImportReconciliationResult(
                     ImportReconciliationStatus.Pending, selectedHistory.Count,
@@ -208,11 +223,13 @@ public sealed class ImportReconciliationService : IImportReconciliationService
         return new ImportReconciliationResult(
             ImportReconciliationStatus.Succeeded,
             orderedFiles.Length,
-            commandRecordPurged
-                ? "The Lidarr command record was purged, but every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings."
-                : commandId is null
-                    ? "The command receipt was unavailable, but every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings."
-                    : "Every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings.",
+            usedRewrittenHistoryFallback
+                ? "Every approved file was verified after Lidarr rewrote or omitted historical source identity, using unique album history, native transfer state, filesystem state, current track-file state, and track bindings."
+                : commandRecordPurged
+                    ? "The Lidarr command record was purged, but every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings."
+                    : commandId is null
+                        ? "The command receipt was unavailable, but every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings."
+                        : "Every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings.",
             selectedHistory.Select(item =>
             {
                 var approved = orderedFiles.Single(file => file.TrackId == item.TrackId);

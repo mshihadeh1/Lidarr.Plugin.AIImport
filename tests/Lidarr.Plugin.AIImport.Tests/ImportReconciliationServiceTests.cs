@@ -105,6 +105,53 @@ public sealed class ImportReconciliationServiceTests
     }
 
     [Test]
+    public async Task Recovers_from_unique_album_history_when_download_id_and_source_path_were_rewritten()
+    {
+        var started = DateTimeOffset.Parse("2026-10-27T08:00:00Z");
+        var rewritten = History(started.AddSeconds(1)) with
+        {
+            DownloadId = string.Empty,
+            DroppedPath = "/rewritten/client/path/track.flac"
+        };
+        var client = new FakeClient
+        {
+            Command = new LidarrCommandState(42, "ManualImport", "completed", "successful"),
+            History = [rewritten],
+            TrackFiles = [new LidarrTrackFileEvidence(501, 5, 10, "/music/track.flac", 123, Quality(), 0)],
+            Tracks = [new LidarrTrackBinding(1001, 5, 10, 501, true)]
+        };
+        var verifier = new FakeVerifier(new VerifiedTransferResult(AuthId, TransferResultOutcome.Linked, 1, 2));
+        var service = new ImportReconciliationService(client, verifier);
+
+        var result = await service.ReconcileAsync(Plan(), [Binding()], 42, started, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Status, Is.EqualTo(ImportReconciliationStatus.Succeeded));
+            Assert.That(result.Message, Does.Contain("rewrote"));
+            Assert.That(verifier.Destinations, Is.EqualTo(new[] { "/music/track.flac" }));
+        });
+    }
+
+    [Test]
+    public void Rejects_ambiguous_album_history_fallback()
+    {
+        var started = DateTimeOffset.Parse("2026-10-27T08:00:00Z");
+        var first = History(started.AddSeconds(1)) with { DownloadId = string.Empty, DroppedPath = "/rewritten/a.flac" };
+        var second = first with { HistoryId = 602, TrackFileId = 502, ImportedPath = "/music/other.flac" };
+        var client = new FakeClient
+        {
+            Command = new LidarrCommandState(42, "ManualImport", "completed", "successful"),
+            History = [first, second]
+        };
+        var service = new ImportReconciliationService(
+            client, new FakeVerifier(new VerifiedTransferResult(AuthId, TransferResultOutcome.Linked, 1, 2)));
+
+        Assert.ThrowsAsync<ImportReconciliationException>(() => service.ReconcileAsync(
+            Plan(), [Binding()], 42, started, CancellationToken.None));
+    }
+
+    [Test]
     public async Task Returns_pending_without_inspecting_files_while_command_is_running()
     {
         var client = new FakeClient { Command = new LidarrCommandState(42, "ManualImport", "started", "unknown") };

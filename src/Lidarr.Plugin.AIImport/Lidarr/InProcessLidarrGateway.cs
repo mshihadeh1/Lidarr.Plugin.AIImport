@@ -171,7 +171,10 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
                 IndexerFlags = file.IndexerFlags,
                 DownloadId = file.DownloadId ?? downloadId,
                 Size = file.Size,
-                ManualImportId = file.Id
+                ManualImportId = file.Id,
+                SuggestedReleaseId = file.Release?.Id > 0 ? file.Release.Id : null,
+                SuggestedTrackIds = file.Tracks?.Where(track => track.Id > 0).Select(track => track.Id)
+                    .Distinct().OrderBy(id => id).ToArray() ?? Array.Empty<int>()
             };
         }).ToArray();
 
@@ -228,7 +231,10 @@ public sealed class InProcessLidarrGateway : IInProcessLidarrGateway
                     IndexerFlags = file.IndexerFlags,
                     DownloadId = null,
                     Size = file.Size,
-                    ManualImportId = file.Id
+                    ManualImportId = file.Id,
+                    SuggestedReleaseId = file.Release?.Id > 0 ? file.Release.Id : null,
+                    SuggestedTrackIds = file.Tracks?.Where(track => track.Id > 0).Select(track => track.Id)
+                        .Distinct().OrderBy(id => id).ToArray() ?? Array.Empty<int>()
                 };
             })
             .ToArray();

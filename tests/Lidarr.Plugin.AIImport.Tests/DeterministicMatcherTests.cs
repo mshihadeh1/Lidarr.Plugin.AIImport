@@ -59,6 +59,57 @@ public sealed class DeterministicMatcherTests
     }
 
     [Test]
+    public void Complete_unique_lidarr_suggestions_avoid_llm_ranking()
+    {
+        var files = new[]
+        {
+            Source("f1", "unhelpful one", 0, 0, 0) with { SuggestedReleaseId = 101, SuggestedTrackIds = [1001] },
+            Source("f2", "unhelpful two", 0, 0, 0) with { SuggestedReleaseId = 101, SuggestedTrackIds = [1002] }
+        };
+        var release = Release(101, "Album", new[]
+        {
+            Track(1001, "First Song", 1, "1", 180_000),
+            Track(1002, "Second Song", 1, "2", 201_000)
+        }) with { ArtistId = 5 };
+
+        var result = new DeterministicMatcher().Match(files, new[] { release });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Status, Is.EqualTo(DeterministicStatus.Proposed));
+            Assert.That(result.ReleaseId, Is.EqualTo(101));
+            Assert.That(result.Tracks.Select(x => x.TrackId), Is.EqualTo(new[] { 1001, 1002 }));
+            Assert.That(result.Explanation, Does.Contain("Lidarr"));
+        });
+    }
+
+    [Test]
+    public void Rejected_lidarr_suggestions_cannot_be_promoted_to_automatic_proposal()
+    {
+        var files = new[]
+        {
+            Source("f1", "unhelpful", 0, 0, 0) with
+            {
+                SuggestedReleaseId = 101,
+                SuggestedTrackIds = [1001],
+                Rejections = ["Track match is not close enough"]
+            }
+        };
+        var release = Release(101, "Album", new[]
+        {
+            Track(1001, "First Song", 1, "1", 180_000)
+        }) with { ArtistId = 5 };
+
+        var result = new DeterministicMatcher().Match(files, new[] { release });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Status, Is.Not.EqualTo(DeterministicStatus.Proposed));
+            Assert.That(result.Explanation, Does.Not.Contain("AI ranking was not required"));
+        });
+    }
+
+    [Test]
     public void Existing_library_track_is_not_selected()
     {
         var files = new[] { Source("f1", "First Song", 1, 1, 181_000) };
