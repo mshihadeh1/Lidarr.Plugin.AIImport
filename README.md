@@ -1,4 +1,4 @@
-# Lidarr AI Import v2.0.8
+# Lidarr AI Import v2.0.9
 
 Standalone AI-assisted strict-hardlink imports for **Lidarr 3.1.2.4913**, with optional unattended MusicBrainz-backed YOLO mode.
 
@@ -46,7 +46,7 @@ The plugin checks these settings again before authorization and command submissi
 
 ### From a GitHub release
 
-Install `Lidarr.Plugin.AIImport-v2.0.8.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
+Install `Lidarr.Plugin.AIImport-v2.0.9.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
 ### Manual installation
 
@@ -138,7 +138,7 @@ v2.0.6 makes interactive discovery a durable Lidarr server-side job. The initiat
 
 v2.0.7 redesigns the workspace around **AI Import**, **Manual Review**, and **Import History** tabs. Durable server-owned stage and album progress survives browser closure. Import History exposes every audited plug-in import, exact source/destination and Lidarr evidence, and the existing fail-closed rollback that removes exact hardlinks and matching track-file records while retaining source files and library metadata. A durable stop request prevents further mutations. Submitted work continues through reconciliation or recovery, and unresolved outcomes remain indeterminate rather than being reported as safely stopped. Periodic and tracked-download triggers remain paused until the operator explicitly starts AI Import again.
 
-v2.0.8 prevents repeated YOLO imports when Lidarr rewrites the history `droppedPath`. If the path text no longer matches, AI Import now binds the source to exactly one current imported track through file size, quality, indexer flags, Lidarr track-file and track ownership, and the live hardlink device/inode identity. Only exact evidence is suppressed as already imported; missing, conflicting, replaced, or changing evidence remains pending or indeterminate. Fully verified stale Activity entries are then ignored and removed from Lidarr tracking without deleting download-client data.
+v2.0.9 recovers imports after Lidarr purges their terminal command rows by requiring the same complete native, filesystem, history, track-file, and track-binding evidence used for ordinary reconciliation. This lets verified imports reach stale Activity cleanup without weakening command identity checks while the command row still exists. v2.0.8's exact hardlink suppression for rewritten history `droppedPath` values remains active; uncertain or conflicting evidence still fails closed and remains non-retryable.
 
 ### Downloads for artists not yet in Lidarr
 

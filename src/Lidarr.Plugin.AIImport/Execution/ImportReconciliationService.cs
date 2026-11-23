@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using Lidarr.Plugin.AIImport.Approval;
 using Lidarr.Plugin.AIImport.Authorization;
+using NzbDrone.Core.Datastore;
 
 namespace Lidarr.Plugin.AIImport.Execution;
 
@@ -107,22 +108,32 @@ public sealed class ImportReconciliationService : IImportReconciliationService
             authorizationBindings.Select(binding => binding.SourceId).Distinct(StringComparer.Ordinal).Count() != authorizationBindings.Count)
             throw new ArgumentException("Reconciliation authorization bindings must be unique.", nameof(authorizationBindings));
         var bindingsBySourceId = authorizationBindings.ToDictionary(binding => binding.SourceId, StringComparer.Ordinal);
+        var commandRecordPurged = false;
 
         if (commandId is not null)
         {
-            var command = await _lidarr.GetCommandAsync(commandId.Value, cancellationToken).ConfigureAwait(false);
-            if (command.CommandId != commandId.Value || !string.Equals(command.Name, "ManualImport", StringComparison.OrdinalIgnoreCase))
-                throw new ImportReconciliationException("Lidarr command identity does not match the approved manual import.");
-            if (string.Equals(command.Status, "queued", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(command.Status, "started", StringComparison.OrdinalIgnoreCase))
-                return new ImportReconciliationResult(ImportReconciliationStatus.Pending, 0, "Lidarr command is still running.");
-            var terminalStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            try
             {
-                "completed", "failed", "aborted", "cancelled", "orphaned"
-            };
-            if (!terminalStatuses.Contains(command.Status))
-                throw new ImportReconciliationException(
-                    $"Lidarr command returned unknown status {command.Status}; external state requires manual reconciliation.");
+                var command = await _lidarr.GetCommandAsync(commandId.Value, cancellationToken).ConfigureAwait(false);
+                if (command.CommandId != commandId.Value || !string.Equals(command.Name, "ManualImport", StringComparison.OrdinalIgnoreCase))
+                    throw new ImportReconciliationException("Lidarr command identity does not match the approved manual import.");
+                if (string.Equals(command.Status, "queued", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(command.Status, "started", StringComparison.OrdinalIgnoreCase))
+                    return new ImportReconciliationResult(ImportReconciliationStatus.Pending, 0, "Lidarr command is still running.");
+                var terminalStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "completed", "failed", "aborted", "cancelled", "orphaned"
+                };
+                if (!terminalStatuses.Contains(command.Status))
+                    throw new ImportReconciliationException(
+                        $"Lidarr command returned unknown status {command.Status}; external state requires manual reconciliation.");
+            }
+            catch (ModelNotFoundException)
+            {
+                // Lidarr periodically purges terminal command rows. The persisted command ID
+                // is still useful provenance, but exact per-file evidence is authoritative.
+                commandRecordPurged = true;
+            }
         }
 
         var history = await _lidarr.GetImportHistoryAsync(plan.DownloadId, plan.AlbumId, cancellationToken).ConfigureAwait(false);
@@ -197,9 +208,11 @@ public sealed class ImportReconciliationService : IImportReconciliationService
         return new ImportReconciliationResult(
             ImportReconciliationStatus.Succeeded,
             orderedFiles.Length,
-            commandId is null
-                ? "The command receipt was unavailable, but every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings."
-                : "Every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings.",
+            commandRecordPurged
+                ? "The Lidarr command record was purged, but every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings."
+                : commandId is null
+                    ? "The command receipt was unavailable, but every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings."
+                    : "Every approved file was verified in native transfer state, filesystem state, Lidarr history, track-file state, and track bindings.",
             selectedHistory.Select(item =>
             {
                 var approved = orderedFiles.Single(file => file.TrackId == item.TrackId);
