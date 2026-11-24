@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using Lidarr.Plugin.AIImport.Commands;
 using Lidarr.Plugin.AIImport.Configuration;
+using Lidarr.Plugin.AIImport.Discovery;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Core.Messaging.Commands;
 
@@ -117,14 +118,37 @@ public sealed class DiscoveryJobStore
                     OverallPercent = beginsFreshPass
                         ? sanitized.OverallPercent
                         : Math.Max(job.Progress?.OverallPercent ?? 0, sanitized.OverallPercent),
-                    Preview = beginsFreshPass
-                        ? sanitized.Preview
-                        : sanitized.Preview ?? job.Progress?.Preview,
+                    Preview = MergePreview(job.Progress?.Preview, sanitized.Preview),
                     UpdatedAt = _timeProvider.GetUtcNow()
                 }
             };
         });
     }
+
+    private static AiImportDiscoverResult? MergePreview(
+        AiImportDiscoverResult? existing,
+        AiImportDiscoverResult? current)
+    {
+        if (existing is null) return current;
+        if (current is null) return existing;
+
+        var analyses = existing.Analyses
+            .Concat(current.Analyses)
+            .GroupBy(PreviewIdentity, StringComparer.Ordinal)
+            .Select(group => group.Last())
+            .ToArray();
+        var diagnostics = existing.Diagnostics
+            .Concat(current.Diagnostics)
+            .GroupBy(item => $"{item.DownloadId}\n{item.Message}", StringComparer.Ordinal)
+            .Select(group => group.Last())
+            .ToArray();
+        return current with { Analyses = analyses, Diagnostics = diagnostics };
+    }
+
+    private static string PreviewIdentity(AiImportAnalysisDto analysis) =>
+        !string.IsNullOrWhiteSpace(analysis.DownloadId) ? $"queue:{analysis.DownloadId}" :
+        !string.IsNullOrWhiteSpace(analysis.FolderPath) ? $"folder:{analysis.FolderPath}" :
+        $"title:{analysis.Title}";
 
     public DiscoveryJobRecord Complete(string jobId, AiImportDiscoverResult result)
     {

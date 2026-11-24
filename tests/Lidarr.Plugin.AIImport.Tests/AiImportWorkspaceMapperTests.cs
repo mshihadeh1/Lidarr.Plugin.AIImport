@@ -62,7 +62,12 @@ public sealed class AiImportWorkspaceMapperTests
             Assert.That(html, Does.Contain("id=\"album-progress\""));
             Assert.That(html, Does.Contain("function renderJobProgress"));
             Assert.That(html, Does.Contain("function renderRunningPreview"));
+            Assert.That(html, Does.Contain("function renderDiagnosticGroups"));
+            Assert.That(html, Does.Contain("Discovery notices"));
+            Assert.That(html, Does.Contain("analyses.length || diagnostics.length"));
+            Assert.That(html, Does.Contain("element('details')"));
             Assert.That(html, Does.Contain("Read-only preview. Approval controls appear after the fresh snapshot finishes."));
+            Assert.That(html, Does.Contain("earlier safe passes remain visible"));
             Assert.That(html, Does.Contain("Technical details and recovery controls"));
             Assert.That(html, Does.Contain("--lidarr-green:#00a65b"));
             Assert.That(html, Does.Contain("--page:#202020"));
@@ -77,7 +82,7 @@ public sealed class AiImportWorkspaceMapperTests
             Assert.That(html, Does.Contain("Rollback response failed. Its outcome may be indeterminate; do not retry"));
             Assert.That(html, Does.Not.Contain("Rollback stopped:"));
             Assert.That(html, Does.Not.Contain("confirmation.disabled = false;\n              rollback.disabled"));
-            Assert.That(html, Does.Contain("analyses.length + diagnostics.length"));
+            Assert.That(html, Does.Contain("analyses.length + diagnosticGroupCount(diagnostics)"));
             Assert.That(html, Does.Contain("analyses.length || diagnostics.length"));
             Assert.That(html, Does.Contain(".tab-panel:focus-visible"));
             Assert.That(html, Does.Contain("commandStatus: value.commandStatus"));

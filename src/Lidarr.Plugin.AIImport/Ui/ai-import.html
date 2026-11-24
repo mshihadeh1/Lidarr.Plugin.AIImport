@@ -502,7 +502,7 @@
     summary.replaceChildren(element('strong', `AI Import found ${analyses.length} album${analyses.length === 1 ? '' : 's'}.`));
     summary.appendChild(document.createTextNode(` ${proposed} have complete verified mappings; ${analyses.length - proposed} need mapping or metadata review.`));
     if (diagnostics.length) summary.appendChild(document.createTextNode(` ${diagnostics.length} diagnostic${diagnostics.length === 1 ? '' : 's'} require attention.`));
-    reviewCount.textContent = String(analyses.length + diagnostics.length);
+    reviewCount.textContent = String(analyses.length + diagnosticGroupCount(diagnostics));
     if (analyses.length || diagnostics.length) {
       const openReviews = element('button', 'Open Manual Review', 'secondary');
       openReviews.style.marginLeft = '12px';
@@ -510,12 +510,45 @@
       summary.appendChild(openReviews);
     }
     results.replaceChildren();
-    diagnostics.forEach(item => results.appendChild(element(
-      'p',
-      `${item.message} Already imported: ${item.alreadyImportedCount}; indeterminate: ${item.indeterminateCount}.`,
-      item.indeterminateCount ? 'error' : 'muted')));
+    const diagnosticGroups = renderDiagnosticGroups(diagnostics);
+    if (diagnosticGroups) results.appendChild(diagnosticGroups);
     analyses.forEach(x => results.appendChild(renderAnalysis(x)));
     if (!analyses.length && !diagnostics.length) results.appendChild(element('div', 'Nothing needs manual review. AI Import did not find any blocked albums or untracked download folders.', 'empty-state'));
+  }
+
+  function renderDiagnosticGroups(diagnostics) {
+    if (!diagnostics.length) return null;
+    const groups = new Map();
+    diagnostics.forEach(item => {
+      const key = String(item.message || 'Discovery notice');
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
+    });
+    const details = element('details');
+    const totalIndeterminate = diagnostics.reduce((sum, item) => sum + Number(item.indeterminateCount || 0), 0);
+    details.appendChild(element('summary',
+      `Discovery notices — ${diagnostics.length} item${diagnostics.length === 1 ? '' : 's'}${totalIndeterminate ? ` · ${totalIndeterminate} indeterminate files` : ''}`,
+      totalIndeterminate ? 'error' : 'muted'));
+    details.appendChild(element('p',
+      'Expand to review the affected download or folder identifiers and the recorded discovery details.',
+      'muted'));
+    groups.forEach((items, message) => {
+      const section = element('section', null, 'notice');
+      section.appendChild(element('strong', `${message} (${items.length})`));
+      const list = element('ul', null, 'candidate-list');
+      items.forEach(item => {
+        const identity = item.downloadId || 'Unidentified source';
+        list.appendChild(element('li',
+          `${identity} — already imported: ${item.alreadyImportedCount || 0}; indeterminate: ${item.indeterminateCount || 0}`));
+      });
+      section.appendChild(list);
+      details.appendChild(section);
+    });
+    return details;
+  }
+
+  function diagnosticGroupCount(diagnostics) {
+    return new Set(diagnostics.map(item => String(item.message || 'Discovery notice'))).size;
   }
 
   function clampPercent(value) {
@@ -538,11 +571,13 @@
   function renderRunningPreview(preview) {
     const analyses = (preview && preview.analyses) || [];
     const diagnostics = (preview && preview.diagnostics) || [];
-    reviewCount.textContent = String(analyses.length + diagnostics.length);
+    reviewCount.textContent = String(analyses.length + diagnosticGroupCount(diagnostics));
     results.replaceChildren();
-    diagnostics.forEach(item => results.appendChild(element(
-      'p', `${item.message} Already imported: ${item.alreadyImportedCount}; indeterminate: ${item.indeterminateCount}.`,
-      item.indeterminateCount ? 'error' : 'muted')));
+    if (analyses.length || diagnostics.length) results.appendChild(element('p',
+      'Read-only results from earlier safe passes remain visible while fresh rediscovery confirms the final current snapshot.',
+      'notice muted'));
+    const diagnosticGroups = renderDiagnosticGroups(diagnostics);
+    if (diagnosticGroups) results.appendChild(diagnosticGroups);
     analyses.forEach(analysis => {
       const card = element('article', null, 'card');
       const heading = element('div', null, 'section-title');
