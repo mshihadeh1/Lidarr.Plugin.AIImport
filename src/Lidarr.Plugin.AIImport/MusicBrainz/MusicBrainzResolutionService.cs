@@ -26,11 +26,15 @@ public sealed class MusicBrainzResolutionService : IMusicBrainzResolutionService
 {
     private const decimal MinimumAutomaticConfidence = 0.85m;
     private const string SystemPrompt = """
-        Select the single MusicBrainz release that exactly represents this complete downloaded album.
-        Compare artist, release title, disc/track positions, track titles, track count, and durations.
-        Select only a supplied releaseMusicBrainzId. Use notFound when more than one release remains plausible,
-        when the source appears incomplete, or when no candidate has a complete one-to-one track correspondence.
-        Confidence is between 0 and 1. Return only the required JSON object.
+        Select the supplied MusicBrainz release that best represents the downloaded album.
+        Judge the evidence as a music expert: artist identity, release context, disc/track positions, recording sequence,
+        titles, track count, and durations. Minor punctuation, capitalization, Unicode, transliteration, localization,
+        romanization, country/date metadata, and small duration differences do not by themselves make a release wrong.
+        Prefer an English/Latin-script album and track listing when the request asks for English titles and the editions
+        are otherwise equivalent. Select only a supplied releaseMusicBrainzId. Use notFound when the source is genuinely
+        incomplete, materially conflicts with every candidate, or evidence cannot distinguish non-equivalent editions.
+        Confidence is between 0 and 1. Give one concise evidence-based explanation without narrating internal deliberation.
+        Return only the required JSON object.
         """;
 
     private readonly IMusicBrainzReleaseClient _musicBrainz;
@@ -57,7 +61,8 @@ public sealed class MusicBrainzResolutionService : IMusicBrainzResolutionService
         // prevents a plausible title match from authorizing a partial or expanded edition.
         var candidates = search.Candidates
             .Where(x => x.Tracks.Count == files.Count)
-            .OrderByDescending(x => x.SearchScore)
+            .OrderByDescending(x => settings.PreferEnglishMusicBrainzTitles ? EnglishPreferenceScore(x) : 0)
+            .ThenByDescending(x => x.SearchScore)
             .ThenBy(x => x.ReleaseMusicBrainzId, StringComparer.Ordinal)
             .ToArray();
         if (candidates.Length == 0)
@@ -65,6 +70,7 @@ public sealed class MusicBrainzResolutionService : IMusicBrainzResolutionService
 
         var payload = new
         {
+            preferEnglishTitles = settings.PreferEnglishMusicBrainzTitles,
             sourceFiles = files.OrderBy(x => x.Id, StringComparer.Ordinal).Select(x => new
             {
                 sourceFileId = x.Id,
@@ -128,6 +134,16 @@ public sealed class MusicBrainzResolutionService : IMusicBrainzResolutionService
                 selection.Explanation,
                 candidates.Length),
             $"selected {selected.ReleaseMusicBrainzId} from {candidates.Length} complete candidate(s)");
+    }
+
+    private static decimal EnglishPreferenceScore(MusicBrainzReleaseCandidate candidate)
+    {
+        var titles = candidate.Tracks.Select(x => x.Title).Prepend(candidate.Title).ToArray();
+        var letters = titles.SelectMany(x => x).Count(char.IsLetter);
+        if (letters == 0) return 0m;
+        var latin = titles.SelectMany(x => x).Count(character =>
+            char.IsLetter(character) && character <= '\u024f');
+        return (decimal)latin / letters;
     }
 
     internal static MusicBrainzSelection ParseSelection(string output)

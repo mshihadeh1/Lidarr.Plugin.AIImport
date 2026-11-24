@@ -86,7 +86,7 @@ public sealed class DiscoveryJobStoreTests
     }
 
     [Test]
-    public void Running_review_preview_is_durable_until_a_fresh_snapshot_begins()
+    public void Running_review_preview_remains_visible_across_internal_fresh_snapshot_passes()
     {
         using var temp = new TestTempDirectory();
         var path = Path.Combine(temp.Path, "discovery-jobs.json");
@@ -106,7 +106,7 @@ public sealed class DiscoveryJobStoreTests
         Assert.Multiple(() =>
         {
             Assert.That(reloaded.Progress!.Preview!.CandidateCount, Is.EqualTo(1));
-            Assert.That(fresh.Progress!.Preview, Is.Null);
+            Assert.That(fresh.Progress!.Preview!.CandidateCount, Is.EqualTo(1));
         });
     }
 

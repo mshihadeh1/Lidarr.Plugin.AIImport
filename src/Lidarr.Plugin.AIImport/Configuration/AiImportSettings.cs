@@ -54,6 +54,9 @@ public sealed class AiImportSettings : IProviderConfig
     [FieldDefinition(14, Label = "YOLO Scan Interval", Type = FieldType.Number, Unit = "minutes", HelpText = "When YOLO mode and untracked folders are configured, queue a fresh discovery at this interval.")]
     public int YoloScanIntervalMinutes { get; set; } = 15;
 
+    [FieldDefinition(15, Label = "Prefer English MusicBrainz Titles", Type = FieldType.Checkbox, HelpText = "When equivalent MusicBrainz editions are available, prefer releases whose album and track titles are in English or Latin script. Release identity and import safety checks still apply.")]
+    public bool PreferEnglishMusicBrainzTitles { get; set; } = true;
+
     [FieldDefinition(99, Label = "Open AI Import Workspace", Type = FieldType.OAuth, HelpText = "Open the in-Lidarr discovery, review, approval, execution, status, and reconciliation workspace")]
     public string Workspace { get; set; } = string.Empty;
 
