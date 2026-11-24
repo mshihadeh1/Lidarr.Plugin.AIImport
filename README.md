@@ -1,4 +1,4 @@
-# Lidarr AI Import v2.0.11
+# Lidarr AI Import v2.0.12
 
 Standalone AI-assisted strict-hardlink imports for **Lidarr 3.1.2.4913**, with optional unattended MusicBrainz-backed YOLO mode.
 
@@ -46,7 +46,7 @@ The plugin checks these settings again before authorization and command submissi
 
 ### From a GitHub release
 
-Install `Lidarr.Plugin.AIImport-v2.0.11.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
+Install `Lidarr.Plugin.AIImport-v2.0.12.net8.0.zip` through Lidarr's plugin support, then restart Lidarr.
 
 ### Manual installation
 
@@ -68,7 +68,7 @@ Install `Lidarr.Plugin.AIImport-v2.0.11.net8.0.zip` through Lidarr's plugin supp
    ```
 
 3. Restart Lidarr.
-4. Confirm **System → Plugins** reports `AI Import` version `2.0.11.0`.
+4. Confirm **System → Plugins** reports `AI Import` version `2.0.12.0`.
 5. Configure the exact Media Management settings listed above and restart Lidarr once more.
 
 ## Configure the LLM endpoint
@@ -89,6 +89,7 @@ In **Settings → Connect**, add and save **AI Import**. Configure:
 - **YOLO Root Folder ID**, **Quality Profile ID**, and **Metadata Profile ID**: required explicit destinations when YOLO is enabled. The plugin never chooses first/default destinations.
 - **YOLO Scan Interval**: periodic untracked-folder discovery interval, from 5 to 1,440 minutes.
 - **MusicBrainz Candidate Limit**: maximum number of structurally plausible editions fetched in full. The resolver fails closed rather than truncating plausible editions.
+- **Prefer English MusicBrainz Titles**: enabled by default; ranks otherwise equivalent English/Latin-script album and track titles first without overriding identity or import-safety validation.
 
 Use **Test** before saving. Endpoint credentials remain in Lidarr's provider settings and are not included in workflow state, prompts, action responses, or logs.
 
@@ -144,6 +145,8 @@ v2.0.10 recovers legacy imports whose command rows were purged and whose histori
 
 v2.0.11 incorporates read-only production findings from v2.0.10. A legacy audit may use one unique album/track history event even when historical size, quality, flags, download ID, or source path were rewritten, but success still requires exact current track-file metadata and ownership, current track binding, durable native authorization, and source/destination hardlink identity. Duplicate recovery warnings are suppressed across host-created service instances, and running Manual Review previews remain visible while the scanner advances to later albums in the same snapshot.
 
+v2.0.12 groups repetitive discovery notices into collapsible sections and keeps read-only Manual Review previews visible across internal fresh-snapshot YOLO passes. It prefers equivalent English/Latin-script MusicBrainz album and track titles by default. MusicBrainz matching now lets the LLM recognize equivalent editions despite punctuation, capitalization, Unicode, romanization, localization, country/date metadata, or small duration differences, while candidate IDs, exact track count, confidence, current-state mapping, approval, and hardlink reconciliation gates remain mandatory.
+
 ### Downloads for artists not yet in Lidarr
 
 When qBittorrent sends a failed/blocked download to Lidarr and every source file has the same valid MusicBrainz artist, release-group, and release tags, discovery offers **Add verified artist and album**. Select an existing accessible Lidarr root folder, quality profile, and metadata profile, review the exact MusicBrainz IDs, and explicitly approve the library addition. The plugin calls Lidarr's own metadata, add, refresh, release-monitoring, and read-back services. It adds or reuses only the exact artist/album, selects only the tagged release, disables searches, and does not import files during this action. Run discovery again, review the resulting Lidarr-backed mapping, create an expiring approval, and execute normally. With **YOLO Mode** enabled, this add-to-library step is performed automatically during discovery and the resulting mapping is promoted to a proposed mapping for your final review.
@@ -171,7 +174,7 @@ If an execute response is lost or reports `Indeterminate`, do not execute again.
 
 ```bash
 git submodule update --init --recursive
-VERSION=2.0.7 ./scripts/build.sh
+VERSION=2.0.12 ./scripts/build.sh
 ```
 
 A dirty local verification build requires `ALLOW_DIRTY_BUILD=1` and intentionally does not claim a corresponding-source commit URL. Release packages must be produced from a clean tagged tree.
